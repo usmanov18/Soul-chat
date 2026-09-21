@@ -1,0 +1,286 @@
+"""Topic archive / export (TZ 20).
+
+Exports every message of a topic — text, photo, video, voice, document, link,
+location, sticker — into JSON / HTML / TXT / PDF, zips them and hands the file
+to both participants before the topic is deleted.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import zipfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.config import settings
+from app.core.logging import get_logger
+from app.enums import AuditAction
+from app.models.message import Message
+from app.models.security import Archive
+from app.models.topic import Topic
+from app.models.user import User
+from app.services.audit import AuditService
+from app.services.pdf_writer import build_transcript_pdf
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class ArchiveResult:
+    row: Archive
+    path: str
+    size: int
+    checksum: str
+    formats: list[str]
+    message_count: int
+    media_count: int
+
+
+class ArchiveService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.audit = AuditService(session)
+
+    # ------------------------------------------------------------------
+    async def export(self, topic: Topic, requested_by: User | None = None,
+                     formats: list[str] | None = None) -> ArchiveResult:
+        formats = [f.lower() for f in (formats or settings.archive_formats)]
+        rows, senders = await self._load(topic)
+
+        os.makedirs(settings.archive_dir, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        slug = topic.code.replace("-", "").lower()
+        base = f"soulchat-{slug}-{stamp}"
+        zip_path = os.path.join(settings.archive_dir, f"{base}.zip")
+
+        payloads: dict[str, bytes] = {
+            "json": self._json(topic, rows, senders).encode("utf-8"),
+            "txt": self._txt(topic, rows, senders).encode("utf-8"),
+            "html": self._html(topic, rows, senders).encode("utf-8"),
+            "pdf": build_transcript_pdf(
+                f"SoulChat {topic.code}", self._blocks(topic, rows, senders)
+            ),
+        }
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for fmt in formats:
+                if fmt in payloads:
+                    archive.writestr(f"{base}.{fmt}", payloads[fmt])
+            archive.writestr("README.txt", self._readme(topic).encode("utf-8"))
+
+        size = os.path.getsize(zip_path)
+        checksum = _sha256(zip_path)
+        media_count = sum(1 for row in rows if row.has_media)
+
+        archive_row = Archive(
+            topic_id=topic.id,
+            fmt="zip",
+            path=zip_path,
+            size=size,
+            checksum=checksum,
+            requested_by=requested_by.id if requested_by else None,
+            message_count=len(rows),
+            media_count=media_count,
+        )
+        self.session.add(archive_row)
+        await self.audit.log(
+            AuditAction.EXPORT,
+            actor=requested_by,
+            topic=topic,
+            message=f"archive {base}.zip ({len(rows)} messages, {size} bytes)",
+        )
+        await self.session.flush()
+        return ArchiveResult(
+            row=archive_row,
+            path=zip_path,
+            size=size,
+            checksum=checksum,
+            formats=formats,
+            message_count=len(rows),
+            media_count=media_count,
+        )
+
+    def read(self, result: ArchiveResult) -> bytes:
+        with open(result.path, "rb") as handle:
+            return handle.read()
+
+    # ------------------------------------------------------------------
+    async def _load(self, topic: Topic) -> tuple[list[Message], dict[int, str]]:
+        stmt = (
+            select(Message)
+            .where(Message.topic_id == topic.id)
+            .options(selectinload(Message.media))
+            .order_by(Message.id)
+        )
+        rows = list((await self.session.execute(stmt)).scalars().all())
+        senders: dict[int, str] = {}
+        for user in (await self.session.execute(select(User))).scalars().all():
+            senders[user.id] = user.full_name
+        return rows, senders
+
+    # ---------------------------------------------------------- renderers
+    def _json(self, topic: Topic, rows: list[Message], senders: dict[int, str]) -> str:
+        payload = {
+            "topic": {
+                "code": topic.code,
+                "status": topic.status,
+                "created_at": _iso(topic.created_at),
+                "closed_at": _iso(topic.closed_at),
+                "message_count": topic.message_count,
+                "media_count": topic.media_count,
+            },
+            "participants": [
+                {"role": "owner", "id": topic.owner_id, "name": senders.get(topic.owner_id, "")},
+                *(
+                    [{"role": "partner", "id": topic.partner_id,
+                      "name": senders.get(topic.partner_id, "")}]
+                    if topic.partner_id else []
+                ),
+            ],
+            "messages": [
+                {
+                    "id": row.id,
+                    "telegram_message_id": row.tg_message_id,
+                    "at": _iso(row.created_at),
+                    "sender": senders.get(row.sender_id, f"id{row.sender_id}"),
+                    "type": row.content_type,
+                    "text": row.text,
+                    "caption": row.caption,
+                    "file_id": row.file_id,
+                    "media": [
+                        {
+                            "kind": media.kind,
+                            "file_id": media.file_id,
+                            "size": media.file_size,
+                            "duration": media.duration,
+                        }
+                        for media in row.media
+                    ],
+                    "deleted": row.deleted,
+                }
+                for row in rows
+            ],
+            "exported_at": _iso(datetime.now(UTC)),
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def _txt(self, topic: Topic, rows: list[Message], senders: dict[int, str]) -> str:
+        lines = [
+            f"SoulChat arxivi — {topic.code}",
+            f"Status: {topic.status}",
+            f"Yaratilgan: {_iso(topic.created_at)}",
+            f"Yopilgan: {_iso(topic.closed_at) or '-'}",
+            f"Xabarlar: {len(rows)}",
+            "=" * 60,
+            "",
+        ]
+        for row in rows:
+            who = senders.get(row.sender_id, f"id{row.sender_id}")
+            stamp = (row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else "")
+            body = row.text or row.caption or f"[{row.content_type}]"
+            lines.append(f"[{stamp}] {who} ({row.content_type}): {body}")
+            for media in row.media:
+                lines.append(f"    ↳ {media.kind} file_id={media.file_id} size={media.file_size}")
+        return "\n".join(lines)
+
+    def _html(self, topic: Topic, rows: list[Message], senders: dict[int, str]) -> str:
+        bubbles = []
+        for row in rows:
+            who = _html_escape(senders.get(row.sender_id, f"id{row.sender_id}"))
+            stamp = row.created_at.strftime("%d.%m %H:%M") if row.created_at else ""
+            body = _html_escape(row.text or row.caption or f"[{row.content_type}]")
+            media_html = "".join(
+                f'<div class="media">{_html_escape(m.kind)} · {_html_escape(m.file_id or "")}</div>'
+                for m in row.media
+            )
+            bubbles.append(
+                f'<div class="msg"><div class="meta"><b>{who}</b><span>{stamp}</span></div>'
+                f'<div class="body">{body}{media_html}</div></div>'
+            )
+        return f"""<!doctype html>
+<html lang="uz"><head><meta charset="utf-8">
+<title>SoulChat — {topic.code}</title>
+<style>
+  :root {{ color-scheme: dark light; }}
+  body {{ font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0;
+         background: linear-gradient(160deg,#0f172a,#1e293b); color: #e2e8f0; }}
+  .wrap {{ max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }}
+  header {{ padding: 24px; border-radius: 20px; backdrop-filter: blur(12px);
+            background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }}
+  h1 {{ margin: 0; font-size: 28px; letter-spacing: .5px; }}
+  .muted {{ opacity: .7; font-size: 14px; }}
+  .msg {{ margin-top: 14px; padding: 14px 16px; border-radius: 18px;
+          background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); }}
+  .meta {{ display: flex; justify-content: space-between; font-size: 12px; opacity: .75; }}
+  .body {{ margin-top: 6px; white-space: pre-wrap; }}
+  .media {{ margin-top: 6px; font-size: 12px; opacity: .6; }}
+</style></head>
+<body><div class="wrap">
+<header>
+  <h1>💬 {topic.code}</h1>
+  <div class="muted">Status: {topic.status} · Xabarlar: {len(rows)} ·
+  Yaratilgan: {_iso(topic.created_at)}</div>
+</header>
+{''.join(bubbles)}
+</div></body></html>"""
+
+    def _blocks(self, topic: Topic, rows: list[Message], senders: dict[int, str]) -> list[str]:
+        header = [
+            f"SOULCHAT ARXIVI - {topic.code}",
+            f"Status: {topic.status}",
+            f"Yaratilgan: {_iso(topic.created_at)}",
+            f"Yopilgan: {_iso(topic.closed_at) or '-'}",
+            f"Jami xabar: {len(rows)}",
+            "-" * 60,
+        ]
+        body = []
+        for row in rows:
+            who = senders.get(row.sender_id, f"id{row.sender_id}")
+            stamp = row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else ""
+            body.append(f"[{stamp}] {who} ({row.content_type}): "
+                        f"{row.text or row.caption or '[' + row.content_type + ']'}")
+        return header + body
+
+    @staticmethod
+    def _readme(topic: Topic) -> str:
+        return (
+            f"SoulChat AI arxivi — {topic.code}\n\n"
+            "Fayllar:\n"
+            "  .json — to'liq strukturali eksport (API uchun)\n"
+            "  .html — glass UI uslubidagi o'qish uchun qulay transkript\n"
+            "  .txt  — oddiy matn\n"
+            "  .pdf  — chop etish uchun\n\n"
+            "Media fayllar Telegram serverida file_id orqali saqlanadi; "
+            "json fayldagi file_id bilan bot orqali qayta yuklab olish mumkin.\n"
+        )
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.isoformat()
+
+
+def _html_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def bytes_buffer(data: bytes) -> io.BytesIO:
+    return io.BytesIO(data)

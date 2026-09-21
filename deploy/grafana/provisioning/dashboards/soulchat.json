@@ -1,0 +1,77 @@
+apiVersion: 1
+
+panels:
+  - title: Users
+    type: stat
+    gridPos: { h: 4, w: 6, x: 0, y: 0 }
+    targets:
+      - expr: soulchat_users_total
+        refId: A
+
+  - title: Topics (total)
+    type: stat
+    gridPos: { h: 4, w: 6, x: 6, y: 0 }
+    targets:
+      - expr: soulchat_topics_total
+        refId: A
+
+  - title: Active topics
+    type: stat
+    gridPos: { h: 4, w: 6, x: 12, y: 0 }
+    targets:
+      - expr: soulchat_topics_active
+        refId: A
+
+  - title: Messages (total)
+    type: stat
+    gridPos: { h: 4, w: 6, x: 18, y: 0 }
+    targets:
+      - expr: soulchat_messages_total
+        refId: A
+
+  - title: Messages per second
+    type: timeseries
+    gridPos: { h: 8, w: 12, x: 0, y: 4 }
+    targets:
+      - expr: rate(soulchat_messages_total[5m])
+        legendFormat: relayed
+        refId: A
+
+  - title: Topics by state
+    type: timeseries
+    gridPos: { h: 8, w: 12, x: 12, y: 4 }
+    targets:
+      - expr: soulchat_topics_active
+        legendFormat: active
+        refId: A
+      - expr: soulchat_topics_deleted
+        legendFormat: deleted
+        refId: B
+
+  - title: Activity by hour (UTC)
+    type: bargauge
+    gridPos: { h: 8, w: 12, x: 0, y: 12 }
+    targets:
+      - expr: soulchat_messages_by_hour
+        legendFormat: "{{hour}}:00"
+        refId: A
+
+  - title: Average chat length / D7 retention
+    type: timeseries
+    gridPos: { h: 8, w: 12, x: 12, y: 12 }
+    targets:
+      - expr: soulchat_average_chat_length
+        legendFormat: avg messages
+        refId: A
+      - expr: soulchat_retention_d7 * 100
+        legendFormat: retention %
+        refId: B
+
+schemaVersion: 39
+title: SoulChat AI
+uid: soulchat
+timezone: utc
+refresh: 30s
+time:
+  from: now-24h
+  to: now
