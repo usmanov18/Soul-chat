@@ -63,7 +63,6 @@ async def _superadmin(tg_id: int) -> None:
 
 async def _lockdown() -> None:
     from app.services.relay import LOCKDOWN_PERMISSIONS
-    from app.services.telegram_gateway import AiogramGateway, FakeGateway
 
     if not settings.bot_token or not settings.forum_chat_id:
         print("BOT_TOKEN and FORUM_CHAT_ID must be set to apply the lockdown")

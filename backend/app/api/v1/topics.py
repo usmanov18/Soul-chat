@@ -6,10 +6,9 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
-from app.api.deps import AdminUser, CurrentUser, SessionDep, StaffUser
+from app.api.deps import AdminUser, SessionDep, StaffUser
 from app.api.schemas import TopicActionRequest, TopicList, TopicOut
 from app.core.logging import get_logger
-from app.enums import TopicStatus
 from app.models.topic import Topic
 from app.services.archive_service import ArchiveService
 from app.services.telegram_gateway import FakeGateway

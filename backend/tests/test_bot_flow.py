@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import settings
-from app.enums import MessageContentType, TopicStatus
+from app.enums import MessageContentType
 from app.services.bot_service import SoulChatBot
 from app.services.relay import IncomingMessage
 

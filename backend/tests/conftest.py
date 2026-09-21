@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import logging
 
-logging.getLogger("aiosqlite").setLevel(logging.ERROR)
-logging.getLogger("sqlalchemy.engine").setLevel(logging.ERROR)
-
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -24,6 +21,12 @@ from app.enums import Gender, Role
 from app.models.topic import Topic
 from app.models.user import User
 from app.services.telegram_gateway import FakeGateway
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Keep aiosqlite / SQLAlchemy echo out of the test output."""
+    logging.getLogger("aiosqlite").setLevel(logging.ERROR)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.ERROR)
 
 
 @pytest.fixture(scope="session")
@@ -136,8 +139,8 @@ async def make_topic(session, owner: User, code: str = "A-0001", thread_id: int 
 # ------------------------------------------------------------------- api app
 @pytest_asyncio.fixture
 async def client(session, admin, monkeypatch):
-    from app.main import create_app
     from app.core.security import create_access_token
+    from app.main import create_app
 
     app = create_app()
 

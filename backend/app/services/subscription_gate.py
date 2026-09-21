@@ -8,7 +8,6 @@ for non members, and ``member`` / ``administrator`` / ``creator`` otherwise.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy import select

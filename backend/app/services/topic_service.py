@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.timeutil import utcnow
 from app.enums import (
     AuditAction,
     NotificationKind,
@@ -25,7 +26,6 @@ from app.enums import (
 )
 from app.models.topic import Topic, TopicParticipant
 from app.models.user import User
-from app.core.timeutil import utcnow
 from app.services.audit import AuditService
 from app.services.notification import NotificationService
 from app.services.telegram_gateway import TelegramGateway

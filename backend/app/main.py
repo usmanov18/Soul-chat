@@ -14,7 +14,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import analytics, auth, moderation, settings as settings_router, system, topics, users
+from app.api.v1 import analytics, auth, moderation, system, topics, users
+from app.api.v1 import settings as settings_router
 from app.core.cache import cache
 from app.core.config import settings
 from app.core.db import create_all, engine

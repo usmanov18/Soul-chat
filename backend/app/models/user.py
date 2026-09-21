@@ -41,8 +41,8 @@ class User(TimestampMixin, Base):
     messages_sent: Mapped[int] = mapped_column(Integer, default=0)
     premium: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
-    warns_log: Mapped[list["Warn"]] = relationship(
+    subscriptions: Mapped[list[Subscription]] = relationship(back_populates="user")
+    warns_log: Mapped[list[Warn]] = relationship(
         back_populates="user", foreign_keys="Warn.user_id"
     )
 

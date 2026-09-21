@@ -7,7 +7,6 @@ from datetime import date, datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
-    Integer as _Int,
     Boolean,
     Date,
     DateTime,
@@ -17,6 +16,9 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+)
+from sqlalchemy import (
+    Integer as _Int,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 

@@ -35,7 +35,7 @@ async def test_captcha_solving_unblocks(session, owner, monkeypatch):
     monkeypatch.setattr(settings, "captcha_after_violations", 1)
     security = SecurityService(session)
     await security.register_hit(owner.tg_id)
-    verdict = await security.register_hit(owner.tg_id)
+    await security.register_hit(owner.tg_id)
 
     challenge = await security.issue_captcha(owner.tg_id)
     assert await security.solve_captcha(owner.tg_id, challenge.answer) is True

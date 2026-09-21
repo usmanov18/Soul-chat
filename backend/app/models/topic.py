@@ -94,13 +94,13 @@ class Topic(TimestampMixin, Base):
     emotion: Mapped[str | None] = mapped_column(String(32))
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
 
-    participants: Mapped[list["TopicParticipant"]] = relationship(
+    participants: Mapped[list[TopicParticipant]] = relationship(
         back_populates="topic", cascade="all, delete-orphan"
     )
-    messages: Mapped[list["Message"]] = relationship(  # noqa: F821
+    messages: Mapped[list[Message]] = relationship(  # noqa: F821
         back_populates="topic", cascade="all, delete-orphan"
     )
-    events: Mapped[list["Event"]] = relationship(  # noqa: F821
+    events: Mapped[list[Event]] = relationship(  # noqa: F821
         back_populates="topic", cascade="all, delete-orphan"
     )
 

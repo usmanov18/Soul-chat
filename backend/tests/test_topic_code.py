@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.core.config import settings
 from app.enums import CodeScheme, Gender
 from app.services.topic_code import TopicCodeGenerator

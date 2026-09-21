@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.enums import InviteStatus, ParticipantRole, TopicStatus
+from app.enums import InviteStatus, ParticipantRole
 from app.services.invite_service import InviteError, InviteService
 from tests.conftest import make_topic
 

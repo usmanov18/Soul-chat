@@ -6,12 +6,7 @@ all agree on the exact string values that end up in the database.
 
 from __future__ import annotations
 
-import enum
-
-
-class StrEnum(str, enum.Enum):
-    def __str__(self) -> str:  # pragma: no cover - cosmetic
-        return self.value
+from enum import StrEnum
 
 
 class Role(StrEnum):

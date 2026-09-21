@@ -18,7 +18,6 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

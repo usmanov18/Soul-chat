@@ -16,7 +16,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.core.logging import get_logger
 from app.enums import EventKind, MessageContentType
-from app.services.bot_service import BotReply, Button, SoulChatBot
+from app.services.bot_service import BotReply, SoulChatBot
 from app.services.event_service import EventDraft
 from app.services.relay import IncomingMessage
 from app.services.telegram_gateway import AiogramGateway, TelegramGateway

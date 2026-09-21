@@ -9,9 +9,9 @@ without a network connection.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +21,6 @@ from app.core.logging import get_logger
 from app.core.timeutil import utcnow
 from app.enums import (
     AuditAction,
-    EventKind,
     MessageContentType,
     Role,
     TopicStatus,
@@ -40,7 +39,6 @@ from app.services.security_service import SecurityService
 from app.services.settings_service import SettingsService
 from app.services.subscription_gate import SubscriptionGate
 from app.services.telegram_gateway import TelegramGateway
-from app.services.topic_code import TopicCodeGenerator
 from app.services.topic_service import TopicError, TopicService
 
 logger = get_logger(__name__)
@@ -62,7 +60,7 @@ class BotReply:
     file: tuple[str, str] | None = None  # (kind, file_id)
     document: tuple[bytes, str] | None = None  # (payload, filename)
 
-    def row(self, *buttons: Button) -> "BotReply":
+    def row(self, *buttons: Button) -> BotReply:
         self.buttons.append(list(buttons))
         return self
 

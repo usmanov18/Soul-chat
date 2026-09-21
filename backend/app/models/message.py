@@ -59,8 +59,8 @@ class Message(TimestampMixin, Base):
     moderation_action: Mapped[str] = mapped_column(String(16), default="allow")
     relayed: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    topic: Mapped["Topic"] = relationship(back_populates="messages")  # noqa: F821
-    media: Mapped[list["Media"]] = relationship(
+    topic: Mapped[Topic] = relationship(back_populates="messages")  # noqa: F821
+    media: Mapped[list[Media]] = relationship(
         back_populates="message", cascade="all, delete-orphan"
     )
 
@@ -113,7 +113,7 @@ class Event(TimestampMixin, Base):
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    topic: Mapped["Topic"] = relationship(back_populates="events")  # noqa: F821
+    topic: Mapped[Topic] = relationship(back_populates="events")  # noqa: F821
 
 
 class ChannelPost(TimestampMixin, Base):
