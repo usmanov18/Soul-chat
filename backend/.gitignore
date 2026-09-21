@@ -1,2 +1,5 @@
 .env
 __pycache__/
+data/archives/
+data/backups/
+data/*.sqlite3
