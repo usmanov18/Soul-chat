@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+out/
+backend/data/*.db
+*.sqlite3
+.env
+!.env.example
+dist/
+build/
+
+# vaqtinchalik fayllar
+.commit-msg.tmp
+
+# tashqi uzatish artefaktlari
+*.bundle
+*.patch
