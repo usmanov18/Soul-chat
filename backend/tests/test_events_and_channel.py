@@ -71,9 +71,47 @@ async def test_new_topic_announcement_contains_code_not_names(session, owner, pa
     assert "A-0028" in text
     assert "Yangi suhbat boshlandi" in text
     assert topic.channel_post_id == message_id
+    # anonymity by default — real names stay inside the bot
+    assert "Akbar" not in text
+    assert "Salima" not in text
 
 
-def test_gallery_caption_layout():
+async def _set_flag(session, key: str, value: bool) -> None:
+    """The admin panel switch is a DB row; the env var is only the default."""
+    from app.models.log import Setting
+    from app.services.settings_service import DEFAULTS, SettingsService
+
+    value_type = DEFAULTS[key][0]
+    session.add(Setting(key=key, value=str(value).lower(), value_type=value_type))
+    await session.flush()
+    SettingsService(session).invalidate()
+
+
+async def test_new_topic_announcement_can_include_names(session, owner, partner, gateway):
+    await _set_flag(session, "channel.show_names", True)
+    topic = await make_topic(session, owner, code="A-0029")
+    await ChannelService(session, gateway).announce_topic(topic, owner, partner)
+
+    text = gateway.sent("send_message")[0].args[1]
+    assert "Akbar Karimov" in text
+    assert "Salima Yusupova" in text
+
+
+async def test_gallery_can_be_disabled(session, owner, partner, gateway):
+    await _set_flag(session, "channel.show_gallery", False)
+    topic = await make_topic(session, owner)
+    card = GalleryCard("A-041", "Akbar", "Salima", "", None, datetime.now(UTC))
+
+    result = await ChannelService(session, gateway).publish_gallery(
+        topic, owner, partner, "AgADBA", card
+    )
+
+    assert result is None
+    assert gateway.sent("send_photo") == []
+
+
+def test_gallery_caption_is_anonymous_by_default():
+    """TZ 10: names never leave the bot unless an admin opts in."""
     service = ChannelService.__new__(ChannelService)
     card = GalleryCard(
         topic_code="A-041", owner_name="Akbar", partner_name="Salima", caption="Bugun ilk uchrashuv.",
@@ -82,9 +120,20 @@ def test_gallery_caption_layout():
     caption = service.render_gallery_caption(card)
     assert caption.splitlines()[0] == "🌸"
     assert "A-041" in caption
-    assert "Akbar ❤️ Salima" in caption
+    assert "Akbar" not in caption
+    assert "Salima" not in caption
     assert "📍 Toshkent" in caption
     assert "🕒 19:00" in caption
+
+
+def test_gallery_caption_can_show_names_when_enabled():
+    service = ChannelService.__new__(ChannelService)
+    card = GalleryCard(
+        topic_code="A-041", owner_name="Akbar", partner_name="Salima", caption="",
+        location=None, when=datetime(2026, 9, 20, 19, 0, tzinfo=UTC),
+    )
+    caption = service.render_gallery_caption(card, show_names=True)
+    assert "Akbar ❤️ Salima" in caption
 
 
 async def test_gallery_post_is_published_and_recorded(session, owner, partner, gateway):

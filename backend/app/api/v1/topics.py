@@ -99,6 +99,19 @@ async def freeze(code: str, session: SessionDep, user: StaffUser, body: TopicAct
     return TopicOut.model_validate(topic)
 
 
+@router.post("/{code}/unfreeze", response_model=TopicOut)
+async def unfreeze(code: str, session: SessionDep, user: StaffUser, body: TopicActionRequest) -> TopicOut:
+    service = TopicService(session, _gateway())
+    topic = await service.by_code(code)
+    if topic is None:
+        raise HTTPException(404, "Topic not found")
+    try:
+        await service.unfreeze(topic, user, body.reason)
+    except TopicError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return TopicOut.model_validate(topic)
+
+
 @router.post("/{code}/block", response_model=TopicOut)
 async def block(code: str, session: SessionDep, user: StaffUser, body: TopicActionRequest) -> TopicOut:
     service = TopicService(session, _gateway())
@@ -149,11 +162,12 @@ async def delete(code: str, session: SessionDep, user: AdminUser) -> dict:
 @router.get("/{code}/archive")
 async def download_archive(code: str, session: SessionDep, user: StaffUser) -> FileResponse:
     """TZ 20 — build and stream the export bundle."""
-    service = TopicService(session, _gateway())
+    gateway = _gateway()
+    service = TopicService(session, gateway)
     topic = await service.by_code(code)
     if topic is None:
         raise HTTPException(404, "Topic not found")
-    result = await ArchiveService(session).export(topic, user)
+    result = await ArchiveService(session, gateway).export(topic, user)
     return FileResponse(
         result.path,
         media_type="application/zip",

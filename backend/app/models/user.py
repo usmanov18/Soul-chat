@@ -40,6 +40,8 @@ class User(TimestampMixin, Base):
     topics_created: Mapped[int] = mapped_column(Integer, default=0)
     messages_sent: Mapped[int] = mapped_column(Integer, default=0)
     premium: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Panel credential. NULL until an admin runs `manage.py setpassword`.
+    password_hash: Mapped[str | None] = mapped_column(String(255))
 
     subscriptions: Mapped[list[Subscription]] = relationship(back_populates="user")
     warns_log: Mapped[list[Warn]] = relationship(

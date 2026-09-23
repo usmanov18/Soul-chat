@@ -138,6 +138,7 @@ class AuditAction(StrEnum):
     TOPIC_DELETE = "topic.delete"
     TOPIC_BLOCK = "topic.block"
     TOPIC_FREEZE = "topic.freeze"
+    TOPIC_UNFREEZE = "topic.unfreeze"
     PARTNER_INVITE = "partner.invite"
     PARTNER_ACCEPT = "partner.accept"
     PARTNER_LEAVE = "partner.leave"

@@ -197,6 +197,35 @@ class TopicService:
         )
         return topic
 
+    async def unfreeze(self, topic: Topic, actor: User | None = None, reason: str = "") -> Topic:
+        """Lift a moderator freeze (FROZEN -> ACTIVE).
+
+        ``TopicStatusFlow`` already allowed ``FROZEN -> ACTIVE`` and
+        ``POST /topics/{code}/restore`` could perform it, so the admin panel was
+        never truly stuck. The gaps this closes:
+
+        * the **bot** had no way at all. A frozen user running ``/restore`` got
+          "Tiklanadigan suhbat topilmadi." (``_find_closed_topic`` only matches
+          blocked/pending/archived), and a moderator calling
+          ``moderate(action="restore")`` got "Noma'lum amal: restore" because it
+          also routes through ``_find_closed_topic``. Verified against the code
+          before writing this.
+        * freezing and unfreezing were asymmetric in the API surface: ``freeze``
+          had its own route and audit action, unfreezing had to borrow
+          ``restore``, which also clears ``is_closed`` and ``delete_at`` and
+          logs the wrong action.
+        """
+        # transition() treats "same status" as a silent no-op, so without this
+        # check unfreezing an ACTIVE topic would report success and write a
+        # misleading audit row.
+        if topic.status != TopicStatus.FROZEN.value:
+            raise TopicError("Suhbat muzlatilmagan.")
+        await self.transition(topic, TopicStatus.ACTIVE)
+        await self.audit.log(
+            AuditAction.TOPIC_UNFREEZE, actor=actor, topic=topic, message=f"unfrozen: {reason}"
+        )
+        return topic
+
     async def archive(self, topic: Topic, actor: User | None = None) -> Topic:
         await self.transition(topic, TopicStatus.ARCHIVED)
         topic.is_closed = True

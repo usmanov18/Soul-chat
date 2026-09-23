@@ -1,13 +1,20 @@
 """Shared fixtures.
 
-Every test runs against a fresh in-memory SQLite database and the
+By default every test runs against a fresh in-memory SQLite database and the
 :class:`FakeGateway`, so the whole platform — bot commands, lifecycle state
 machine, REST API — is exercised without Telegram, Redis or Postgres.
+
+Set ``DATABASE_URL`` to run the very same suite against a real server (CI does
+this for PostgreSQL). That is what reaches the dialect-specific paths —
+``FOR UPDATE``, the partial unique index, ``EXTRACT`` — which SQLite cannot
+exercise. Isolation is per test: the schema is dropped and rebuilt around each
+one, which is slower than SQLite but keeps every test independent.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 import pytest
 import pytest_asyncio
@@ -34,16 +41,32 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+def _test_database_url() -> str:
+    """``DATABASE_URL`` when it points at a real server, else in-memory SQLite."""
+    url = os.getenv("DATABASE_URL", "")
+    return url if url and not url.startswith("sqlite") else "sqlite+aiosqlite:///:memory:"
+
+
 @pytest_asyncio.fixture
 async def engine():
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
-    )
+    url = _test_database_url()
+    if url.startswith("sqlite"):
+        engine = create_async_engine(
+            url,
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+    else:
+        # a shared server: keep a small pool and rebuild the schema per test
+        engine = create_async_engine(url, pool_size=5, max_overflow=5)
+
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield engine
+    if not url.startswith("sqlite"):
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
 

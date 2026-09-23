@@ -39,7 +39,7 @@ async def login(payload: LoginRequest, request: Request, session: SessionDep) ->
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not a staff account")
 
     secret = settings.secret_key
-    if not verify_password(payload.password, _bootstrap_hash(user, secret)):
+    if not _verify_credentials(user, payload.password, secret):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
     access = create_access_token(user.id, {"role": user.role, "tg_id": user.tg_id})
@@ -90,8 +90,33 @@ async def me(user: CurrentUser) -> dict:
     }
 
 
+def _verify_credentials(user: User, password: str, secret: str) -> bool:
+    """Prefer the stored hash; fall back to the bootstrap credential.
+
+    The bootstrap password (``<username>:<SECRET_KEY>``) exists so a fresh
+    deployment can be logged into at all. It is used *only* while
+    ``users.password_hash`` is empty — ``manage.py setpassword`` replaces it and
+    from then on the derived password stops working.
+    """
+    if user.password_hash:
+        return verify_password(password, user.password_hash)
+    if not settings.allow_bootstrap_login:
+        logger.warning(
+            "bootstrap_login_blocked user=%s — run `manage.py setpassword` first",
+            user.username,
+        )
+        return False
+    if verify_password(password, _bootstrap_hash(user, secret)):
+        logger.warning(
+            "bootstrap_login_used user=%s — set a real password with manage.py setpassword",
+            user.username,
+        )
+        return True
+    return False
+
+
 def _bootstrap_hash(user: User, secret: str) -> str:
-    """Staff password = ``<username>:<secret_key>`` until a real credential store exists."""
+    """Derived bootstrap credential: ``<username>:<secret_key>``."""
     return hash_password(f"{user.username}:{secret}")
 
 

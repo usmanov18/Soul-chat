@@ -109,7 +109,7 @@ class SearchRequest(BaseModel):
 
 # --------------------------------------------------------------- moderation
 class ModerationRequest(BaseModel):
-    action: str  # warn | mute | ban | freeze | restore
+    action: str  # warn | mute | ban | freeze | unfreeze | restore
     tg_id: int
     reason: str = ""
     topic_code: str | None = None

@@ -7,16 +7,17 @@ import os
 import sys
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app import models  # noqa: E402,F401  (registers mappers)
 from app.core.config import settings  # noqa: E402
 from app.core.db import Base  # noqa: E402
-from app import models  # noqa: E402,F401  (registers mappers)
 
 config = context.config
 if config.config_file_name is not None:

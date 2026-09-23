@@ -31,6 +31,18 @@ async def lifespan(app: FastAPI):
         await create_all()
     connected = await cache.connect()
     logger.info("cache backend: %s", cache.backend if connected else "memory")
+    if not connected and settings.environment == "production":
+        # Rate limiting, flood counters and captcha state live in this cache.
+        # With the in-memory fallback every worker (and every replica) keeps its
+        # own counters, so `rate_limit_per_minute` silently becomes
+        # limit x workers. Fail loudly rather than let an operator discover it
+        # by measuring a flood that should have been blocked.
+        logger.warning(
+            "Redis is unavailable — falling back to the in-process cache. "
+            "Rate limiting and flood counters are now per worker; run more than "
+            "one worker or replica and the configured limits no longer hold. "
+            "Set REDIS_ENABLED=true and point REDIS_URL at a reachable server."
+        )
     init_sentry()
     app.state.started_at = time.time()
     try:

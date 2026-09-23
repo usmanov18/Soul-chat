@@ -8,6 +8,7 @@
     python manage.py snapshot          # write today's analytics row
     python manage.py backup            # run a backup now
     python manage.py bot               # start the aiogram bot (polling)
+    python manage.py setpassword admin  # store a real admin password
     python manage.py schema            # print the table list
 """
 
@@ -59,6 +60,36 @@ async def _superadmin(tg_id: int) -> None:
         user.role = Role.SUPER_ADMIN.value
         await session.commit()
     print(f"tg_id {tg_id} is now super_admin")
+
+
+async def _setpassword(username: str, password: str | None, rotate: bool) -> None:
+    """Store a real credential so the derived bootstrap password stops working."""
+    import getpass
+
+    from sqlalchemy import select
+
+    from app.core.security import hash_password
+    from app.models.user import User
+
+    secret = password or getpass.getpass("Yangi parol: ")
+    confirm = password or getpass.getpass("Parolni tasdiqlang: ")
+    if secret != confirm:
+        print("Parollar mos kelmadi.")
+        raise SystemExit(1)
+    if len(secret) < 12:
+        print("Parol kamida 12 ta belgidan iborat bo'lishi kerak.")
+        raise SystemExit(1)
+
+    async with SessionLocal() as session:
+        user = (
+            await session.execute(select(User).where(User.username == username))
+        ).scalar_one_or_none()
+        if user is None:
+            print(f"'{username}' topilmadi.")
+            raise SystemExit(1)
+        user.password_hash = hash_password(secret)
+        await session.commit()
+    print(f"✅ {username} uchun parol o'rnatildi (bootstrap parol endi ishlamaydi).")
 
 
 async def _lockdown() -> None:
@@ -118,6 +149,11 @@ def main() -> int:
     sub.add_parser("backup")
     sub.add_parser("schema")
     sub.add_parser("bot")
+    setpw = sub.add_parser("setpassword", help="Admin uchun haqiqiy parol o'rnatish")
+    setpw.add_argument("username", help="Foydalanuvchi nomi (masalan admin)")
+    setpw.add_argument("--password", default=None, help="Parol (berilmasa so'raladi)")
+    setpw.add_argument("--rotate", action="store_true", help="API kalitini ham bekor qilish")
+
     promote = sub.add_parser("superadmin")
     promote.add_argument("tg_id", type=int)
     args = parser.parse_args()
@@ -131,7 +167,9 @@ def main() -> int:
         "schema": _schema,
         "bot": _bot,
     }
-    if args.command == "superadmin":
+    if args.command == "setpassword":
+        asyncio.run(_setpassword(args.username, args.password, args.rotate))
+    elif args.command == "superadmin":
         asyncio.run(_superadmin(args.tg_id))
     else:
         asyncio.run(handlers[args.command]())

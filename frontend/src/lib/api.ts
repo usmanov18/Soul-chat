@@ -64,6 +64,22 @@ export type UserRow = {
   created_at: string;
 };
 
+/**
+ * Operator-facing metadata for a setting, from `SETTINGS_META` on the backend.
+ *
+ * `enforcement` is the part that matters: it says whether the platform can
+ * actually guarantee the toggle. `advisory` means the value is stored and shown
+ * but *not* enforceable — `topic.copy_enabled` is the standing example, because
+ * a silently copied message is indistinguishable from a typed one.
+ */
+export type Enforcement = "enforced" | "reactive" | "advisory";
+
+export type SettingMeta = {
+  label: string;
+  enforcement: Enforcement;
+  note: string;
+};
+
 export type AuditRow = {
   id: number;
   action: string;
@@ -107,12 +123,19 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const response = await fetch(path, { ...init, headers, cache: "no-store" });
   if (!response.ok) {
-    let detail = response.statusText;
+    // Prefer FastAPI's `detail`; fall back to the HTTP reason phrase. Dumping a
+    // raw `{}` into the UI (what `detail ?? JSON.stringify(body)` produced when
+    // the body was an empty object) tells the operator nothing.
+    let detail = response.statusText || `HTTP ${response.status}`;
     try {
-      const body = await response.json();
-      detail = body.detail ?? JSON.stringify(body);
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body?.detail === "string" && body.detail) {
+        detail = body.detail;
+      } else if (body && typeof body === "object" && Object.keys(body).length > 0) {
+        detail = JSON.stringify(body);
+      }
     } catch {
-      /* non json error body */
+      /* non json error body — keep the reason phrase */
     }
     throw new ApiError(response.status, detail);
   }
@@ -136,7 +159,8 @@ export const endpoints = {
     }),
   users: () => api<UserRow[]>("/api/v1/users?limit=200"),
   audit: () => api<AuditRow[]>("/api/v1/moderation/audit?limit=100"),
-  settings: () => api<{ items: Record<string, unknown> }>("/api/v1/settings"),
+  settings: () =>
+    api<{ items: Record<string, unknown>; meta?: Record<string, SettingMeta> }>("/api/v1/settings"),
   updateSetting: (key: string, value: unknown) =>
     api<{ key: string; value: unknown }>("/api/v1/settings", {
       method: "PUT",

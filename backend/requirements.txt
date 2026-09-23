@@ -12,14 +12,14 @@ redis>=5.0
 celery>=5.4
 httpx>=0.27
 PyJWT>=2.8
-passlib[bcrypt]>=1.7
+bcrypt>=4.0
 python-multipart>=0.0.9
 aiofiles>=24.1
 
 # Optional (enabled by configuration)
 # sentry-sdk[fastapi]>=2.0
 # boto3>=1.34
-# Pillow>=10.0
+Pillow>=10.0  # Event Gallery overlay (TZ 15)
 
 # Development / test
 pytest>=8.2

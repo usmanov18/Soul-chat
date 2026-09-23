@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.i18n import t
 from app.core.logging import get_logger
 from app.core.timeutil import utcnow
 from app.enums import (
@@ -83,7 +84,7 @@ class SoulChatBot:
         self.events = EventService(session, gateway)
         self.channel = ChannelService(session, gateway)
         self.scheduler = SchedulerService(session, gateway)
-        self.archives = ArchiveService(session)
+        self.archives = ArchiveService(session, gateway)
         self.analytics = AnalyticsService(session)
         self.ai = AIModerator(session, self.security)
         self.relay = RelayService(session, gateway, self.ai)
@@ -206,7 +207,7 @@ class SoulChatBot:
     # ---------------------------------------------------------- /invite
     async def invite(self, tg_id: int) -> BotReply:
         user = await self.user(tg_id)
-        topic = await self.relay.current_topic(tg_id)
+        topic = await self.relay.writable_topic(tg_id)
         if user is None or topic is None:
             return BotReply("Sizda faol suhbat yo'q. /new bilan yarating.")
         if topic.owner_id != user.id:
@@ -262,6 +263,45 @@ class SoulChatBot:
                 await self.channel.publish_gallery(topic, owner or user, partner, message.file_id, card)
         return None  # silently relayed — echoing back would be noise
 
+    async def handle_private_edit(self, message: IncomingMessage) -> BotReply | None:
+        """Mirror a DM edit onto the topic copy (silently)."""
+        result = await self.relay.relay_edit(message)
+        if not result.ok:
+            return None
+        await self.session.flush()
+        return None
+
+    async def undo_last(self, tg_id: int) -> BotReply:
+        """Delete the user's most recent relayed message from the topic.
+
+        The Bot API never notifies a bot about a user deleting their own DM, so
+        an explicit command is the only reliable entry point.
+        """
+        from sqlalchemy import select
+
+        from app.models.message import Message
+
+        user = await self.user(tg_id)
+        if user is None:
+            return BotReply("Avval /start ni bosing.")
+        row = (
+            await self.session.execute(
+                select(Message)
+                .where(
+                    Message.sender_id == user.id,
+                    Message.deleted.is_(False),
+                    Message.relayed.is_(True),
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return BotReply(t("undo.none", await self._lang(tg_id)))
+        await self.relay.relay_delete(tg_id, row.source_message_id or 0)
+        await self.session.flush()
+        return BotReply(t("undo.done", await self._lang(tg_id)))
+
     # ----------------------------------------------------------- group
     async def handle_group_message(
         self, chat_id: int, tg_message_id: int, author_tg_id: int, thread_id: int | None = None
@@ -280,6 +320,8 @@ class SoulChatBot:
     # ----------------------------------------------------------- /close
     async def close(self, tg_id: int) -> BotReply:
         user = await self.user(tg_id)
+        # current_topic, not writable_topic: closing and confirming are exactly
+        # what a user does *after* the chat stopped being writable.
         topic = await self.relay.current_topic(tg_id)
         if user is None or topic is None:
             return BotReply("Faol suhbat topilmadi.")
@@ -355,7 +397,7 @@ class SoulChatBot:
     # ----------------------------------------------------------- events
     async def create_event(self, tg_id: int, draft: EventDraft) -> BotReply:
         user = await self.user(tg_id)
-        topic = await self.relay.current_topic(tg_id)
+        topic = await self.relay.writable_topic(tg_id)
         if user is None or topic is None:
             return BotReply("Faol suhbat topilmadi.")
         from app.services.event_service import EventError
@@ -374,7 +416,7 @@ class SoulChatBot:
 
     async def schedule(self, tg_id: int, days: list[int], start: str, end: str) -> BotReply:
         user = await self.user(tg_id)
-        topic = await self.relay.current_topic(tg_id)
+        topic = await self.relay.writable_topic(tg_id)
         if user is None or topic is None:
             return BotReply("Faol suhbat topilmadi.")
         from app.services.event_service import EventError
@@ -423,22 +465,14 @@ class SoulChatBot:
             lines.append("Faol suhbat yo'q.")
         return BotReply("\n".join(lines), buttons=[self._owner_menu_row()])
 
+    async def _lang(self, tg_id: int) -> str:
+        """The account's stored Telegram language, Uzbek by default."""
+        user = await self.user(tg_id)
+        return user.language_code if user is not None else None
+
     async def help(self, tg_id: int) -> BotReply:
-        return BotReply(
-            "<b>SoulChat qo'llanmasi</b>\n\n"
-            "/new — yangi suhbat yaratish\n"
-            "/invite — sherik taklif qilish\n"
-            "/status — suhbat holati\n"
-            "/close — suhbatni yopish (ikkala tomon tasdiqlaydi)\n"
-            "/confirm &lt;kod&gt; — yopishni tasdiqlash\n"
-            "/restore — 96 soat ichida tiklash\n"
-            "/archive — arxivni yuklab olish\n"
-            "/event — hodisa yaratish\n"
-            "/schedule — yozish vaqtini belgilash\n"
-            "/search &lt;so'z&gt; — qidirish (moderator+)\n"
-            "/stats — statistika (moderator+)\n\n"
-            "Xabar yozish: shu botga oddiy xabar yuboring — u suhbatingizga chiqadi."
-        )
+        """Localised command list (uz / ru / en, from ``users.language_code``)."""
+        return BotReply(t("help.body", await self._lang(tg_id)))
 
     # ------------------------------------------------------------- staff
     async def stats(self, tg_id: int) -> BotReply:
@@ -499,9 +533,21 @@ class SoulChatBot:
             if topic:
                 await self.topics.freeze(topic, user, reason)
                 return BotReply(f"❄️ {topic.code} muzlatildi.")
-        if action == "restore":
-            topic = await self._find_closed_topic_by_tg(target_tg_id)
+        if action == "unfreeze":
+            # current_topic, not writable_topic: a frozen topic is by definition
+            # not writable, and unfreezing is how it becomes writable again.
+            topic = await self.relay.current_topic(target_tg_id)
             if topic:
+                await self.topics.unfreeze(topic, user, reason)
+                return BotReply(f"☀️ {topic.code} muzlatishi bekor qilindi.")
+        if action == "restore":
+            topic = await self._find_closed_topic_by_tg(target_tg_id, include_frozen=True)
+            if topic:
+                # a frozen topic must be unfrozen, not restored: restore() also
+                # clears is_closed/delete_at, which a freeze never set.
+                if topic.status == TopicStatus.FROZEN.value:
+                    await self.topics.unfreeze(topic, user, reason)
+                    return BotReply(f"☀️ {topic.code} muzlatishi bekor qilindi.")
                 await self.topics.restore(topic, user)
                 return BotReply(f"↩️ {topic.code} tiklandi.")
         return BotReply(f"Noma'lum amal: {action}")
@@ -524,14 +570,25 @@ class SoulChatBot:
         return BotReply(f"✅ <code>{key}</code> = {value}")
 
     # --------------------------------------------------------- internal
-    async def _find_closed_topic(self, user: User) -> Topic | None:
+    async def _find_closed_topic(self, user: User, *, include_frozen: bool = False) -> Topic | None:
+        """A topic the caller may bring back to life.
+
+        ``include_frozen`` is staff-only on purpose: a freeze is a moderator
+        decision, and letting the frozen user undo it with ``/restore`` would
+        make the moderation tool useless.
+        """
+        statuses = [
+            TopicStatus.BLOCKED.value,
+            TopicStatus.DELETE_PENDING.value,
+            TopicStatus.ARCHIVED.value,
+        ]
+        if include_frozen:
+            statuses.append(TopicStatus.FROZEN.value)
         stmt = (
             select(Topic)
             .where(
                 Topic.owner_id == user.id,
-                Topic.status.in_(
-                    [TopicStatus.BLOCKED.value, TopicStatus.DELETE_PENDING.value, TopicStatus.ARCHIVED.value]
-                ),
+                Topic.status.in_(statuses),
             )
             .order_by(Topic.id.desc())
             .limit(1)
@@ -552,9 +609,11 @@ class SoulChatBot:
         )
         return (await self.session.execute(stmt2)).scalar_one_or_none()
 
-    async def _find_closed_topic_by_tg(self, tg_id: int) -> Topic | None:
+    async def _find_closed_topic_by_tg(self, tg_id: int, *, include_frozen: bool = False) -> Topic | None:
         user = await self.user(tg_id)
-        return await self._find_closed_topic(user) if user else None
+        if user is None:
+            return None
+        return await self._find_closed_topic(user, include_frozen=include_frozen)
 
     def _owner_menu_row(self) -> list[Button]:
         return [

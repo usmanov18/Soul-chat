@@ -12,3 +12,12 @@ backend/data/*.db
 !.env.example
 dist/
 build/
+
+# vaqtinchalik fayllar
+.commit-msg.tmp
+
+# tashqi uzatish artefaktlari
+*.bundle
+*.patch
+# Drive manba nusxasi (repo ildizida toliq nusxa bor)
+soul-chat-src/

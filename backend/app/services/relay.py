@@ -25,6 +25,7 @@ exactly two people can write to it, and no MTProto userbot is needed.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -33,6 +34,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import metrics
 from app.core.cache import cache
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -87,6 +89,8 @@ class DenyReason(StrEnum):
     BANNED = "banned"
     RATE_LIMITED = "rate_limited"
     MODERATION = "moderation"
+    DUPLICATE = "duplicate"
+    FORWARD = "forward"
 
 
 @dataclass
@@ -168,6 +172,9 @@ class RelayService:
     # ------------------------------------------------------------------
     async def permission_for(self, tg_id: int, topic: Topic | None = None) -> Permission:
         """Can ``tg_id`` write into ``topic`` (or into their current topic)?"""
+        # Resolve without a status filter: a frozen or blocked topic must still
+        # be found, so the precise reason below reaches the user instead of a
+        # generic "you have no chat".
         topic = topic or await self.current_topic(tg_id)
         if topic is None:
             return Permission(False, DenyReason.NO_TOPIC)
@@ -201,15 +208,22 @@ class RelayService:
         return Permission(True, DenyReason.OK, topic)
 
     async def current_topic(self, tg_id: int) -> Topic | None:
-        """The topic a user is currently writing in.
+        """The topic a user is currently involved in, whatever its status.
 
         Preference order: the last topic they used -> the topic they own -> the
-        topic they partner in. Only writable topics count.
+        topic they partner in.
+
+        Deliberately *not* filtered by status. Hiding a frozen, blocked or
+        pending topic here used to make every downstream command report
+        "you have no chat" — so a user sitting in the 96h deletion window could
+        not run ``/archive``, ``/restore`` or even ``/status`` on the very topic
+        they needed it for. Status is a *permission* question, and
+        :meth:`permission_for` already answers it with the precise reason.
         """
         user = await self._user(tg_id)
         if user is not None and user.last_active_topic_id:
             topic = await self.session.get(Topic, user.last_active_topic_id)
-            if topic is not None and tg_id in topic.writer_ids and self._usable(topic):
+            if topic is not None and tg_id in topic.writer_ids:
                 return topic
 
         stmt = (
@@ -229,20 +243,74 @@ class RelayService:
             candidates += list((await self.session.execute(stmt2)).scalars().all())
 
         for topic in candidates:
-            if tg_id in topic.writer_ids and self._usable(topic):
+            if tg_id in topic.writer_ids:
                 return topic
         return None
+
+    async def writable_topic(self, tg_id: int) -> Topic | None:
+        """Like :meth:`current_topic`, but only if the user may still act on it.
+
+        For commands that would *change* the topic (``/invite``, ``/event``,
+        ``/schedule``). Anything that merely reads or rescues it — ``/status``,
+        ``/archive``, ``/close``, ``/confirm`` — must use ``current_topic`` so a
+        closed conversation stays reachable.
+        """
+        topic = await self.current_topic(tg_id)
+        if topic is None:
+            return None
+        if tg_id not in topic.writer_ids or not self._usable(topic):
+            return None
+        return topic
 
     # ------------------------------------------------------------------
     # 3. relay
     # ------------------------------------------------------------------
     async def relay_private(self, incoming: IncomingMessage) -> RelayResult:
         """Relay a DM (or inline-mode query) into the user's topic."""
+        started = time.perf_counter()
+        result = await self._relay_private(incoming)
+        metrics.incr("soulchat_relay_total", {"result": result.reason.value})
+        metrics.observe(
+            "soulchat_relay_duration_seconds",
+            time.perf_counter() - started,
+            {"result": result.reason.value},
+        )
+        return result
+
+    async def _relay_private(self, incoming: IncomingMessage) -> RelayResult:
         perm = await self.permission_for(incoming.user_id)
         if not perm.allowed or perm.topic is None:
             return RelayResult(False, perm.reason, perm.topic, reply=self._deny_text(perm.reason))
 
         topic = perm.topic
+
+        # --- topic policy --------------------------------------------------
+        policy = self._policy_violation(topic, incoming)
+        if policy is not None:
+            return RelayResult(False, DenyReason.FORWARD, topic, reply=policy)
+
+        # --- idempotency --------------------------------------------------
+        # Telegram redelivers updates when a webhook/polling cycle errors out.
+        # Without this a retried update would post the same line twice.
+        if incoming.tg_message_id is not None:
+            existing = (
+                await self.session.execute(
+                    select(Message).where(
+                        Message.topic_id == topic.id,
+                        Message.sender_id == await self._user_id(incoming.user_id),
+                        Message.source_message_id == incoming.tg_message_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return RelayResult(
+                    False,
+                    DenyReason.DUPLICATE,
+                    topic,
+                    tg_message_id=existing.tg_message_id,
+                    message_id=existing.id,
+                    reply=None,          # already relayed: stay silent
+                )
 
         # --- AI moderation ------------------------------------------------
         if self.moderator is not None and incoming.body:
@@ -266,6 +334,86 @@ class RelayService:
         return RelayResult(
             True, DenyReason.OK, topic, tg_message_id=tg_message_id, message_id=row.id
         )
+
+    def _policy_violation(self, topic: Topic, incoming: IncomingMessage) -> str | None:
+        """Enforce the per-topic forward/copy switches.
+
+        ``forward_enabled`` is real: a forwarded DM carries ``forward_origin``
+        and is refused. ``copy_enabled`` is only advisory — a silently copied
+        message is indistinguishable from a typed one, so nothing can reject it
+        (the flag is surfaced in the admin panel, not enforced).
+        """
+        if incoming.is_forward and not topic.forward_enabled:
+            return (
+                "⛔ Ushbu suhbatda boshqa chatdan ko'chirilgan xabar yuborish mumkin emas. "
+                "Matnni qo'lda yozing yoki faylni ulang."
+            )
+        return None
+
+    async def strip_reaction(self, topic: Topic, tg_message_id: int) -> bool:
+        """Remove reactions from a topic message when the topic forbids them.
+
+        The Bot API cannot disable reactions per topic, so they are cleared
+        after the fact; call this from the ``message_reaction`` update handler.
+        """
+        if topic.reactions_enabled:
+            return False
+        if not topic.message_thread_id:
+            return False
+        return await self.gateway.set_message_reaction(topic.chat_id, tg_message_id, [])
+
+    async def relay_edit(self, incoming: IncomingMessage) -> RelayResult:
+        """Mirror an edit made in the DM onto the topic copy."""
+        if incoming.tg_message_id is None:
+            return RelayResult(False, DenyReason.NO_TOPIC, reply=None)
+
+        row = await self._by_source(incoming.user_id, incoming.tg_message_id)
+        if row is None:
+            return RelayResult(False, DenyReason.NO_TOPIC, reply=None)
+
+        topic = await self.session.get(Topic, row.topic_id)
+        if topic is None:
+            return RelayResult(False, DenyReason.NO_TOPIC, reply=None)
+
+        new_text = incoming.text or incoming.caption or ""
+        row.text = incoming.text
+        row.caption = incoming.caption
+        row.edited = True
+
+        if topic.message_thread_id and row.tg_message_id:
+            header = await self._sender_header(incoming.user_id)
+            await self.gateway.edit_message_text(
+                topic.chat_id, row.tg_message_id, f"{header}\n{new_text}" if header else new_text
+            )
+        await self.session.flush()
+        return RelayResult(True, DenyReason.OK, topic, tg_message_id=row.tg_message_id, message_id=row.id)
+
+    async def relay_delete(self, tg_id: int, source_message_id: int) -> RelayResult:
+        """Mirror a deletion made in the DM onto the topic copy."""
+        row = await self._by_source(tg_id, source_message_id)
+        if row is None:
+            return RelayResult(False, DenyReason.NO_TOPIC, reply=None)
+
+        topic = await self.session.get(Topic, row.topic_id)
+        row.deleted = True
+        if topic is not None and topic.message_thread_id and row.tg_message_id:
+            await self.gateway.delete_message(topic.chat_id, row.tg_message_id)
+        await self.session.flush()
+        return RelayResult(True, DenyReason.OK, topic, message_id=row.id)
+
+    async def _by_source(self, tg_id: int, source_message_id: int) -> Message | None:
+        sender_id = await self._user_id(tg_id)
+        return (
+            await self.session.execute(
+                select(Message)
+                .where(
+                    Message.sender_id == sender_id,
+                    Message.source_message_id == source_message_id,
+                )
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
     async def moderate_group_message(
         self, chat_id: int, tg_message_id: int, author_tg_id: int, topic: Topic | None = None
@@ -327,6 +475,7 @@ class RelayService:
         row = Message(
             topic_id=topic.id,
             tg_message_id=tg_message_id,
+            source_message_id=incoming.tg_message_id,
             thread_id=topic.message_thread_id,
             sender_id=(await self._user_id(incoming.user_id)),
             content_type=incoming.content_type,

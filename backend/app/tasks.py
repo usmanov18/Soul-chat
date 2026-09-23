@@ -85,18 +85,36 @@ async def _sweep_delete_pending() -> dict[str, Any]:
 
     now = datetime.now(UTC)
     archived: list[str] = []
+    failed: dict[str, str] = {}
     async with session_scope() as session:
         gateway = await _gateway()
         topics_svc = TopicService(session, gateway)
-        archives = ArchiveService(session)
+        archives = ArchiveService(session, gateway)
         stmt = select(Topic).where(
             Topic.status == "delete_pending", Topic.delete_at.is_not(None), Topic.delete_at <= now
         )
-        for topic in (await session.execute(stmt)).scalars().all():
-            await archives.export(topic)          # TZ 20: archive before deleting
-            await topics_svc.hard_delete(topic)
+        topics = list((await session.execute(stmt)).scalars().all())
+        for topic in topics:
+            # TZ 20 says the archive comes *before* the delete, so a failing
+            # export must never reach hard_delete. But one bad topic must not
+            # strand the rest of the batch either: this task runs every 5
+            # minutes, so without per-topic handling the first failure would
+            # abort the sweep forever and every other user's data would sit in
+            # delete_pending past its 96 hours.
+            try:
+                await archives.export(topic)
+            except Exception as exc:
+                failed[topic.code] = f"archive: {exc}"
+                logger.exception("sweep: archive failed for %s", topic.code)
+                continue
+            try:
+                await topics_svc.hard_delete(topic)
+            except Exception as exc:
+                failed[topic.code] = f"delete: {exc}"
+                logger.exception("sweep: delete failed for %s", topic.code)
+                continue
             archived.append(topic.code)
-    return {"archived": archived, "count": len(archived)}
+    return {"archived": archived, "failed": failed, "count": len(archived)}
 
 
 async def _scheduler_tick() -> dict[str, Any]:
