@@ -63,16 +63,36 @@ Rollar: `user` < `moderator` < `admin` < `super_admin`.
 ### Moderation
 | Metod | Yo'l | Rol | Tavsif |
 |---|---|---|---|
-| POST | `/moderation/action` | moderator+ | `warn` / `mute` / `ban` (admin) / `freeze` / `restore` |
+| POST | `/moderation/action` | moderator+ | `warn` / `mute` / `ban` (admin) / `unban` (admin) / `unmute` / `freeze` / `restore` |
 | GET | `/moderation/spam` | moderator+ | AI/flood detektori natijalari |
 | GET | `/moderation/audit` | admin+ | Audit log |
 | GET | `/moderation/actions` | moderator+ | Mavjud amallar |
+| GET | `/moderation/fake-accounts` | moderator+ | Fake-account shubha skori (D27) |
+| GET | `/moderation/appeals?status=pending` | moderator+ | Apellyatsiyalar (D5) |
+| POST | `/moderation/appeals/{id}/decision` | moderator+ | `approve` (admin — audited unban) / `reject` |
+
+### Panel content (TZ 28)
+| Metod | Yo'l | Rol | Tavsif |
+|---|---|---|---|
+| GET | `/media?kind=&topic_code=&nsfw=` | moderator+ | Media kutubxonasi (topic kodi bilan) |
+| GET | `/events?kind=&status=&topic_code=` | moderator+ | Eventlar ro'yxati |
+| GET | `/channel-posts?kind=` | moderator+ | Kanal postlari / galereya (outer join) |
+| GET | `/notifications?status=&kind=` | moderator+ | Bildirishnomalar oqimi |
+| GET | `/subscriptions?is_member=` | moderator+ | Majburiy obunalar overview |
+
+### Export / Public
+| Metod | Yo'l | Rol | Tavsif |
+|---|---|---|---|
+| GET | `/export/{users\|topics\|messages}?fmt=csv\|json&limit=` | moderator+ | CSV/JSON eksport (max 10k) |
+| GET | `/stats/public` | — | Anonim ochiq statistika (D7); rate limit ostida |
 
 ### Settings / System
 | Metod | Yo'l | Rol |
 |---|---|---|
 | GET / PUT / POST | `/settings`, `/settings/reset` | admin+ |
 | POST / GET | `/backup` | admin+ |
+| GET | `/backup/{id}/file` | admin+ | Zaxira faylini yuklab olish |
+| POST | `/backup/verify` | admin+ | sha256 checksumni qayta tekshirish |
 | POST | `/webhook` | — |
 | GET | `/health` | — |
 | GET | `/metrics` | — (Prometheus) |
@@ -94,9 +114,13 @@ curl -s -X POST http://localhost:8000/api/v1/topics/A-0042/freeze \
 
 ## Rate limit
 
-Rate limit Redis orqali barcha kirish nuqtalari uchun umumiy
-(`RATE_LIMIT_PER_MINUTE`, default 20/daq). Nginx qatlamida qo'shimcha
-`limit_req_zone 30r/s burst=40` qo'yilgan.
+Ikki qatlam:
+
+- **Bot** — `RATE_LIMIT_PER_MINUTE` (default 20/daq), foydalanuvchi bo'yicha
+- **REST API** — `API_RATE_LIMIT_PER_MINUTE` (default 240/daq), IP bo'yicha;
+  oshsa `429` + `Retry-After`, javoblarda `X-RateLimit-*` sarlavhalari.
+  `/health` istisno (monitoring cheksiz so'raydi). Nginx'da qo'shimcha
+  `limit_req_zone 30r/s burst=40` bor.
 
 ## Xato formati
 

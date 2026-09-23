@@ -57,7 +57,7 @@ UZ: dict[str, str] = {
     "event.created": "📅 Voqea qo'shildi: {title}",
     "event.reminder": "⏰ Eslatma: {title}",
     "schedule.set": "🕒 Jadval o'rnatildi: {days} kunlari {start}–{end}.",
-    "help.body": "🌸 <b>Buyruqlar</b>\n\n/new — yangi suhbat\n/invite — sherik taklif qilish\n/close — suhbatni yopish\n/restore — qayta tiklash\n/archive — arxiv olish\n/status — holat\n/undo — oxirgi xabarni o'chirish\n/event — voqea qo'shish\n/schedule — jadval o'rnatish\n/search — qidirish\n/help — yordam",
+    "help.body": "🌸 <b>Buyruqlar</b>\n\n/new — yangi suhbat\n/invite — sherik taklif qilish\n/close — suhbatni yopish\n/restore — qayta tiklash\n/archive — arxiv olish\n/status — holat\n/undo — oxirgi xabarni o'chirish\n/event — voqea qo'shish\n/schedule — jadval o'rnatish\n/search — qidirish\n/timer 12h — oxirgi xabarni vaqtidan keyin o'chirish\n/summary — suhbat xulosasi\n/timeline — munosabat vaqt shkalasi\n/suggest — javob takliflari\n/remember matn — eslatma saqlash\n/memory — eslatmalar\n/appeal matn — ban uchun murojaat\n/help — yordam",
 }
 
 RU: dict[str, str] = {
@@ -95,7 +95,7 @@ RU: dict[str, str] = {
     "event.created": "📅 Событие добавлено: {title}",
     "event.reminder": "⏰ Напоминание: {title}",
     "schedule.set": "🕒 Расписание установлено: {days}, {start}–{end}.",
-    "help.body": "🌸 <b>Команды</b>\n\n/new — новый диалог\n/invite — пригласить партнёра\n/close — закрыть диалог\n/restore — восстановить\n/archive — получить архив\n/status — статус\n/undo — удалить последнее сообщение\n/event — добавить событие\n/schedule — расписание\n/search — поиск\n/help — помощь",
+    "help.body": "🌸 <b>Команды</b>\n\n/new — новый диалог\n/invite — пригласить партнёра\n/close — закрыть диалог\n/restore — восстановить\n/archive — получить архив\n/status — статус\n/undo — удалить последнее сообщение\n/event — добавить событие\n/schedule — расписание\n/search — поиск\n/timer 12h — удалить последнее сообщение позже\n/summary — итоги диалога\n/timeline — шкала отношений\n/suggest — варианты ответа\n/remember текст — сохранить заметку\n/memory — заметки\n/appeal текст — апелляция бана\n/help — помощь",
 }
 
 EN: dict[str, str] = {
@@ -133,7 +133,7 @@ EN: dict[str, str] = {
     "event.created": "📅 Event added: {title}",
     "event.reminder": "⏰ Reminder: {title}",
     "schedule.set": "🕒 Schedule set: {days}, {start}–{end}.",
-    "help.body": "🌸 <b>Commands</b>\n\n/new — new conversation\n/invite — invite a partner\n/close — close the conversation\n/restore — restore it\n/archive — download the archive\n/status — status\n/undo — delete your last message\n/event — add an event\n/schedule — set a schedule\n/search — search\n/help — help",
+    "help.body": "🌸 <b>Commands</b>\n\n/new — new conversation\n/invite — invite a partner\n/close — close the conversation\n/restore — restore it\n/archive — download the archive\n/status — status\n/undo — delete your last message\n/event — add an event\n/schedule — set a schedule\n/search — search\n/timer 12h — delete your last message later\n/summary — conversation summary\n/timeline — relationship timeline\n/suggest — reply suggestions\n/remember text — save a note\n/memory — notes\n/appeal text — appeal a ban\n/help — help",
 }
 
 CATALOGUES: dict[str, Mapping[str, str]] = {"uz": UZ, "ru": RU, "en": EN}

@@ -21,3 +21,4 @@ build/
 *.patch
 # Drive manba nusxasi (repo ildizida toliq nusxa bor)
 soul-chat-src/
+*.db

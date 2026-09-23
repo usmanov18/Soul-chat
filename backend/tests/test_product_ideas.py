@@ -260,3 +260,25 @@ async def test_owner_can_reinvite_after_partner_leaves(session, owner, partner, 
     statuses = {row.user_id: row.status for row in participants}
     assert statuses[partner.id] == ParticipantStatus.LEFT.value
     assert statuses[outsider.id] == ParticipantStatus.ACTIVE.value
+
+
+def test_every_handler_command_is_listed_for_users():
+    """A command that exists but is never advertised is a support ticket factory."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    handlers = (root / "app" / "bot" / "handlers" / "__init__.py").read_text()
+    setup = (root / "app" / "bot" / "setup.py").read_text()
+
+    defined = set(re.findall(r'Command\("([a-z_]+)"\)', handlers))
+    advertised = set(re.findall(r'BotCommand\(command="([a-z_]+)"', setup))
+    # deliberately hidden from the default menu: /confirm is prompted by the
+    # close flow itself; /moderate, /settings and /stats are staff-only and
+    # Telegram's default menu cannot be role-scoped.
+    hidden = {"confirm", "moderate", "settings", "stats"}
+    assert defined - advertised == hidden, (
+        f"menu mismatch: missing={sorted(defined - advertised - hidden)} "
+        f"stale={sorted(advertised - defined)}"
+    )
+    assert advertised <= defined, f"menu lists unknown commands: {sorted(advertised - defined)}"
