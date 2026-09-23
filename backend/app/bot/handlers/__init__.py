@@ -222,6 +222,42 @@ async def cmd_moderate(message: Message, command: CommandObject, **data: Any) ->
     await _render(message, await _service(data).moderate(message.from_user.id, action, target, reason))
 
 
+@router.message(Command("summary"))
+async def cmd_summary(message: Message, **data: Any) -> None:
+    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    await _render(message, await _service(data).summary(message.from_user.id))
+
+
+@router.message(Command("timeline"))
+async def cmd_timeline(message: Message, **data: Any) -> None:
+    await _render(message, await _service(data).timeline(message.from_user.id))
+
+
+@router.message(Command("suggest"))
+async def cmd_suggest(message: Message, **data: Any) -> None:
+    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    await _render(message, await _service(data).suggest(message.from_user.id))
+
+
+@router.message(Command("remember"))
+async def cmd_remember(message: Message, command: CommandObject, **data: Any) -> None:
+    await _render(message, await _service(data).remember(message.from_user.id, command_arg(command.args) or ""))
+
+
+@router.message(Command("memory"))
+async def cmd_memory(message: Message, **data: Any) -> None:
+    await _render(message, await _service(data).memory(message.from_user.id))
+
+
+@router.message(Command("forget"))
+async def cmd_forget(message: Message, command: CommandObject, **data: Any) -> None:
+    args = command_arg(command.args)
+    await _render(
+        message,
+        await _service(data).forget(message.from_user.id, int(args) if args and args.isdigit() else 0),
+    )
+
+
 @router.message(Command("settings"))
 async def cmd_settings(message: Message, command: CommandObject, **data: Any) -> None:
     service = _service(data)

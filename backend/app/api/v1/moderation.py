@@ -42,6 +42,14 @@ async def action(payload: ModerationRequest, session: SessionDep, user: StaffUse
             raise HTTPException(403, "Only admins can ban")
         await security.ban(payload.tg_id, user, payload.reason)
         return WarnOut(user_id=target.id, warns=target.warns)
+    if payload.action == "unban":
+        if user.role == "moderator":
+            raise HTTPException(403, "Only admins can ban")
+        await security.unban(payload.tg_id, user, payload.reason)
+        return WarnOut(user_id=target.id, warns=target.warns)
+    if payload.action == "unmute":
+        await security.unmute(payload.tg_id, user, payload.reason)
+        return WarnOut(user_id=target.id, warns=target.warns)
     if payload.action == "freeze":
         service = TopicService(session, FakeGateway())
         if topic:
@@ -110,6 +118,30 @@ async def audit_logs(
             "at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows
+    ]
+
+
+@router.get("/fake-accounts")
+async def fake_accounts(session: SessionDep, user: StaffUser, limit: int = Query(default=20, le=100)) -> list[dict]:
+    """TZ 27: fake-account suspicion score (profile shape + spam history)."""
+    security = SecurityService(session)
+    rows = (await session.execute(select(User).order_by(User.id.desc()).limit(200))).scalars().all()
+    scored: list[tuple[int, User, list[str]]] = []
+    for row in rows:
+        score, signals = await security.fake_account_score(row)
+        if score > 0:
+            scored.append((score, row, signals))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [
+        {
+            "tg_id": row.tg_id,
+            "username": row.username,
+            "first_name": row.first_name,
+            "score": score,
+            "signals": signals,
+            "is_banned": row.is_banned,
+        }
+        for score, row, signals in scored[:limit]
     ]
 
 

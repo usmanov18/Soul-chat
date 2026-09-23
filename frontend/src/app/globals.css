@@ -45,3 +45,49 @@ body {
     @apply whitespace-nowrap px-4 py-3 text-sm text-slate-200;
   }
 }
+/* ----------------------------------------------------------- light theme (TZ 34) */
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="light"] body {
+  background: #eef2ff;
+  background-image: radial-gradient(60rem 40rem at 110% -10%, rgba(99, 102, 241, 0.15), transparent),
+    radial-gradient(50rem 35rem at -10% 110%, rgba(217, 70, 239, 0.12), transparent);
+  color: #1e293b;
+}
+[data-theme="light"] .glass {
+  border-color: rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+}
+[data-theme="light"] .glass-hover:hover {
+  border-color: rgba(15, 23, 42, 0.16);
+  background: rgba(255, 255, 255, 0.95);
+}
+[data-theme="light"] .stat-label { color: #64748b; }
+[data-theme="light"] .stat-value { color: #0f172a; }
+[data-theme="light"] .btn {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: rgba(15, 23, 42, 0.03);
+  color: #334155;
+}
+[data-theme="light"] .btn:hover {
+  border-color: rgba(15, 23, 42, 0.25);
+  background: rgba(15, 23, 42, 0.07);
+}
+[data-theme="light"] .chip {
+  border-color: rgba(15, 23, 42, 0.15);
+  background: rgba(15, 23, 42, 0.05);
+  color: #334155;
+}
+[data-theme="light"] .input {
+  border-color: rgba(15, 23, 42, 0.15);
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
+}
+[data-theme="light"] .table-head { color: #64748b; }
+[data-theme="light"] .table-cell { color: #334155; }
+[data-theme="light"] .text-slate-300,
+[data-theme="light"] .text-slate-400 { color: #475569; }
+[data-theme="light"] .text-slate-500 { color: #64748b; }
+[data-theme="light"] .text-white { color: #0f172a; }

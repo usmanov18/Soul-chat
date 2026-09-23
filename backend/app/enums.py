@@ -148,6 +148,8 @@ class AuditAction(StrEnum):
     EVENT_CREATE = "event.create"
     WARN_ISSUED = "moderation.warn"
     USER_BAN = "moderation.ban"
+    USER_UNBAN = "moderation.unban"
+    USER_UNMUTE = "moderation.unmute"
     USER_MUTE = "moderation.mute"
     LOGIN = "auth.login"
     LOGOUT = "auth.logout"

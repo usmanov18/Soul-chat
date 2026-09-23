@@ -1,17 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { EmptyState, Panel } from "@/components/cards";
-import { endpoints } from "@/lib/api";
+import { endpoints, type UserRow } from "@/lib/api";
+
+const ACTIONS: { action: string; label: string; staffOnly?: boolean }[] = [
+  { action: "warn", label: "⚠️ Ogohlantirish" },
+  { action: "mute", label: "🔇 Mute" },
+  { action: "ban", label: "⛔ Ban", staffOnly: true },
+  { action: "unban", label: "✅ Unban", staffOnly: true },
+];
 
 export function UsersView() {
-  const [rows, setRows] = useState<Awaited<ReturnType<typeof endpoints.users>>>([]);
+  const [rows, setRows] = useState<UserRow[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Record<string, unknown[]> | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busyTgId, setBusyTgId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await endpoints.users());
+    } catch {
+      setRows([]);
+    }
+  }, []);
 
   useEffect(() => {
-    void endpoints.users().then(setRows).catch(() => setRows([]));
-  }, []);
+    void load();
+  }, [load]);
+
+  const runAction = async (user: UserRow, action: string) => {
+    const reason = window.prompt(`${user.first_name ?? user.tg_id} uchun "${action}" sababi:`) ?? "";
+    setBusyTgId(user.tg_id);
+    setNotice(null);
+    try {
+      await endpoints.moderate({ tg_id: user.tg_id, action, reason });
+      setNotice(`${action}: ${user.first_name ?? user.tg_id} bajarildi`);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Amal bajarilmadi");
+    } finally {
+      setBusyTgId(null);
+    }
+  };
 
   const runSearch = async () => {
     if (!query.trim()) return setResults(null);
@@ -20,6 +52,9 @@ export function UsersView() {
 
   return (
     <div className="space-y-6">
+      {notice ? (
+        <p className="glass p-3 text-sm text-indigo-100">{notice}</p>
+      ) : null}
       <Panel
         title="Qidiruv"
         subtitle="Kod, username, ID, ism, sana, media bo'yicha"
@@ -62,6 +97,7 @@ export function UsersView() {
                   <th className="table-head">Xabar</th>
                   <th className="table-head">Suhbat</th>
                   <th className="table-head">Holat</th>
+                  <th className="table-head">Amallar</th>
                 </tr>
               </thead>
               <tbody>
@@ -80,6 +116,21 @@ export function UsersView() {
                       {user.is_banned ? <span className="chip border-rose-400/30 text-rose-200">banned</span> : null}
                       {user.is_muted ? <span className="chip border-amber-400/30 text-amber-200">muted</span> : null}
                       {user.warns > 0 ? <span className="chip">warn {user.warns}</span> : null}
+                    </td>
+                    <td className="table-cell">
+                      <div className="flex flex-wrap gap-1">
+                        {ACTIONS.map(({ action, label }) => (
+                          <button
+                            key={action}
+                            className="btn px-2 py-1 text-xs"
+                            disabled={busyTgId === user.tg_id}
+                            title={label}
+                            onClick={() => void runAction(user, action)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                     </td>
                   </tr>
                 ))}

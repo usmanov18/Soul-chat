@@ -270,6 +270,19 @@ export const endpoints = {
     api<{ total: number; items: NotificationRow[] }>(
       `/api/v1/notifications${status ? `?status=${encodeURIComponent(status)}` : ""}`
     ),
+  moderate: (body: { tg_id: number; action: string; reason?: string }) =>
+    api<{ user_id: number; warns: number }>("/api/v1/moderation/action", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  backupVerify: (id: number) =>
+    api<{ id: number; status: string; expected: string | null; actual: string | null }>(
+      "/api/v1/backup/verify",
+      { method: "POST", body: JSON.stringify({ id }) }
+    ),
+  backupFileUrl: (id: number) => `/api/v1/backup/${id}/file`,
+  exportUrl: (entity: "users" | "topics" | "messages", fmt: "csv" | "json" = "csv") =>
+    `/api/v1/export/${entity}?fmt=${fmt}`,
   subscriptions: (isMember?: boolean) =>
     api<{ total: number; items: SubscriptionRow[] }>(
       `/api/v1/subscriptions${isMember === undefined ? "" : `?is_member=${isMember}`}`

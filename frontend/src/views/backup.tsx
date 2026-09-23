@@ -9,6 +9,7 @@ export function BackupView() {
   const [rows, setRows] = useState<BackupRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [verifyStatus, setVerifyStatus] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -21,6 +22,19 @@ export function BackupView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const verify = async (row: BackupRow) => {
+    setVerifyStatus((prev) => ({ ...prev, [row.id]: "tekshirilmoqda..." }));
+    try {
+      const result = await endpoints.backupVerify(row.id);
+      setVerifyStatus((prev) => ({ ...prev, [row.id]: result.status }));
+    } catch (error) {
+      setVerifyStatus((prev) => ({
+        ...prev,
+        [row.id]: error instanceof Error ? error.message : "xato",
+      }));
+    }
+  };
 
   const runBackup = async () => {
     setBusy(true);
@@ -66,6 +80,7 @@ export function BackupView() {
                 <th className="table-head">Manzil</th>
                 <th className="table-head">Hajm</th>
                 <th className="table-head">Holat</th>
+                <th className="table-head">Amallar</th>
               </tr>
             </thead>
             <tbody>
@@ -85,6 +100,29 @@ export function BackupView() {
                         {row.error ? `: ${row.error}` : ""}
                       </span>
                     )}
+                  </td>
+                  <td className="table-cell">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {row.path ? (
+                        <a className="btn px-2 py-1 text-xs" href={endpoints.backupFileUrl(row.id)} download>
+                          ⬇️ Yuklab olish
+                        </a>
+                      ) : null}
+                      <button className="btn px-2 py-1 text-xs" onClick={() => void verify(row)}>
+                        🔍 Tekshirish
+                      </button>
+                      {verifyStatus[row.id] ? (
+                        <span
+                          className={`chip ${
+                            verifyStatus[row.id] === "ok"
+                              ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+                              : "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                          }`}
+                        >
+                          {verifyStatus[row.id]}
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}

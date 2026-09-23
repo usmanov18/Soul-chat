@@ -586,12 +586,93 @@ buyurtmachi "haqiqiy funksiya va admin panel"ni so'radi.
   yashirinishi emas (audit tamoyili).
 - Filtrlar URL query orqali — sahifa yangilanmasi server bilan mos.
 
+## 13-xato: `backup_history.target` VARCHAR(16) — PostgreSQL'da insert yiqilardi
+
+CI'ning PostgreSQL job'i `main`ga birlashtirilishidan oldin ham qulayotgandi. Lokal
+`pgserver` bilan reproduksiya qilindi: ``BackupService`` noma'lum target nomini
+(``somewhere-unknown`` — 17 belgi) xato yozuvi sifatida ``backup_history`` ga
+yozishi kerak, lekin ustun ``VARCHAR(16)`` edi. SQLite uzunlikni e'tiborsiz
+qoldirgani uchun butun test bazasi bu bug'ni yashirgan.
+
+Yechim: ustun ``String(32)`` ga kengaytirildi (model + ``0004_backup_target_widen``
+migratsiyasi, inspector-guard + batch alter), test esa tarix qatorini assert
+qiladigan bo'ldi. ``test_search_index_migration_is_a_noop_on_sqlite`` esa
+hardcoded ``0003`` o'rniga head-agnostic qilindi.
+
 ## Holat
 
 | Ko'rsatkich | Qiymat |
 |---|---|
-| Backend testlar | **362** (+9) |
+| Backend testlar (SQLite) | **362** (+9) |
+| Backend testlar (PostgreSQL, pgserver bilan lokal) | **362 passed** — avval 1 failed |
 | Frontend testlar | **59** (+12) |
 | `ruff check` | toza |
 | `tsc --noEmit` | toza (avval 3 xato) |
 | Panel sahifalari | **15** marshrut (+5) |
+
+---
+
+# Yettinchi davra (2026-09-23) — "qolgan hammasi": TZ bo'yicha to'liq qopqoq
+
+Buyurtma: "AI funksiyalari emas — haqiqiy funksiya va admin panel", keyin esa
+"eng sifatli, keng qobiliyatli qilib hammasini qil". Bu davra TZ'da kodga
+moslanmagan har bir bandni yopadi. Har biri test bilan.
+
+## A. Haqiqiy funksiyalar
+
+| TZ | Nima qilindi | Keyingi tekshiruv |
+|---|---|---|
+| 30 | **REST API rate limit** — `RateLimitMiddleware`: per-IP sliding window (`api_rate_limit_per_minute=240`), `/health` istisno, `Retry-After` + `X-RateLimit-*` sarlavhalari. Bot'dagi kabi `cache` infra (Redis'li production'da workerlar bo'ylab global) | 429 testlari |
+| 22/28 | **Panelda foydalanuvchi amallari** — warn/mute/ban/unban tugmalari, sabab prompt bilan, xatolik banneri, ro'yxat avtomatik yangilanadi. Backendga `unban`/`unmute` qo'shildi (audit: `moderation.unban/unmute`), ban faqat admin | 3 UI test + 403 moderator testi |
+| 27 | **`/summary`** — 300 xabargacha AI xulosa (`AIModerator.summarize`), `Summary.text` | mavzusiz/bor holat testlari |
+| 27 | **`/timeline`** — `RelationshipService.timeline`: eventlar + aktivlik + davomiylik, bot uchun HTML render | event/joy testi |
+| 27 | **`/suggest`** — 3 ta javob taklifi; OpenAI kaliti bo'lsa model, bo'lmasa deterministik shablon (buyruq hech qachon yiqilmaydi) | 3 opsiya testi |
+| 27 | **`/remember` `/memory` `/forget`** — `memories` jadvali (25-jadval, `0005_memories` migratsiyasi), faqat muallif o'chira oladi | to'liq oqim + ruxsat testi |
+| 24 | **Birthday sweep** — har kuni 09:00 (beat): `extract(month/day)` bo'yicha topadi, takrorlashga qarshi kunlik guard, `NotificationService.birthday_sweep` | ikki marta chaqirish testi |
+| 23 | **Hashtag qidiruv** — `#tag` butun-so'z filtri (`#bash` ≠ `#bashraf`), paneldagi qidiruvga ulangan | chegara testi |
+| 28/31 | **Export** — `GET /export/{users\|topics\|messages}?fmt=csv\|json` (10k limit, streaming CSV) + **backup verify** (sha256 qayta hisoblash, audit) + **backup faylni yuklab olish** | CSV/JSON/404/tamper testlari |
+
+## B. Media va zaxira
+
+| TZ | Nima qilindi |
+|---|---|
+| 33 | **Thumbnail** — `ensure_thumbnail`: foto relay'da kelganda bir marta 320px JPEG yaratiladi, `media.thumb_path` to'ladi. Hech qachon exception bermaydi (kanal posti kabi bezak) |
+| 27 | **NSFW rasm** — `AIModerator.moderate_image`: caption matn pipeline'i + OpenAI vision (kalit bo'lsa). Kalitsiz — halol: matn bo'yicha baholanadi, pixel klasifikatsiyasi yo'qligi hujjatlashtirilgan |
+| 31 | **S3/Drive adapterlari** — `upload_to_s3` (boto3, `requirements-backup.txt` ekstrasida) va `upload_to_gdrive` (httpx multipart + refresh-token oqimi) real implementatsiya; credentials yo'q bo'lsa `backup_history` ga tushkun `status=failed` yozuvi tushadi, beat job yiqilmaydi |
+
+## C. Dizayn
+
+| TZ | Nima qilindi |
+|---|---|
+| 34 | **Light mode** — `data-theme="light"` + `globals.css` to'liq yorug' palitra (glass, btn, chip, input, table), `🌓` tugma, `localStorage` persist. Default — dark (eski dizayn) |
+
+## D. Ataylab qilinmagan (qaror bilan)
+
+- **Shadcn UI** (TZ 2) — o'z glass-komponentlar tizimi allaqachan barqaror va
+  testlangan; butun panelni qayta yozish foyda keltirmasdi. Tailwind asosida
+  shu uslub qoldi.
+- **Payments** (TZ 28) — TZning o'zi "kelajak uchun" deydi.
+- **40+ jadval** (TZ 29) — 25 ta; TZ ro'yxatidagi ko'plab jadvallar
+  birlashtirilgan (partners→topic_participants, statistics→stats_daily,
+  admins/permissions→users.role, media+archivelar mavjud). Funksional
+  yo'qotish yo'q, takroriy jadvallar yaratilmadi.
+- **Relationship Timeline AI xulosasi** — `/timeline` deterministik (eventlar +
+  statistika); LLM naqshli xulosa keyingi qadam sifatida qoldi.
+
+## Yo'l davomida topilgan/tuzatilgan
+
+1. `schema_at("0001_initial")` endi `0005` jadvalini ham eslaydi —
+   `alembic_schema.LATER_REVISION_OBJECTS` ga `tables` kaliti qo'shildi
+   (spec.get bilan, KeyError yo'q).
+2. `name_equals_username` fake-sinyali olib tashlandi — Telegram'da ism =
+   username ko'p uchraydi, haqiqiy foydalanuvchilarni shubhali qilar edi.
+
+## Holat
+
+| Ko'rsatkich | Qiymat |
+|---|---|
+| Backend testlar (SQLite) | **385** (+23) |
+| Backend testlar (PostgreSQL, asyncpg) | **385 passed** |
+| Frontend testlar | **64** (+5) |
+| `ruff` / `tsc --noEmit` / `next build` | toza (15 sahifa) |
+| Migratsiyalar | 0005_memories |

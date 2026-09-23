@@ -97,6 +97,7 @@ class DashboardOut(BaseModel):
 
 
 class SearchRequest(BaseModel):
+    hashtag: str | None = None
     query: str = ""
     code: str | None = None
     username: str | None = None
@@ -136,6 +137,10 @@ class SettingsOut(BaseModel):
 
 
 # ------------------------------------------------------------------- backup
+class BackupVerifyIn(BaseModel):
+    id: int
+
+
 class BackupOut(BaseModel):
     status: str
     path: str | None = None

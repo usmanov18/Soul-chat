@@ -26,6 +26,7 @@ from app.enums import (
     Role,
     TopicStatus,
 )
+from app.models.message import Message
 from app.models.topic import Topic
 from app.models.user import User
 from app.services.ai_service import AIModerator
@@ -35,6 +36,7 @@ from app.services.audit import AuditService
 from app.services.close_service import CloseService
 from app.services.event_service import ChannelService, EventDraft, EventService, GalleryCard, SchedulerService
 from app.services.invite_service import InviteError, InviteService
+from app.services.relationship import MemoryService, RelationshipService
 from app.services.relay import IncomingMessage, RelayService
 from app.services.security_service import SecurityService
 from app.services.settings_service import SettingsService
@@ -270,6 +272,86 @@ class SoulChatBot:
             return None
         await self.session.flush()
         return None
+
+    # -------------------------------------------------- TZ 27 power commands
+    async def summary(self, tg_id: int) -> BotReply:
+        """TZ 27: AI conversation summary for the current topic."""
+        topic = await self.relay.current_topic(tg_id)
+        if topic is None:
+            return BotReply("Suhbat topilmadi. /new bilan boshlang.")
+        rows = (
+            await self.session.execute(
+                select(Message)
+                .where(Message.topic_id == topic.id)
+                .order_by(Message.id.desc())
+                .limit(300)
+            )
+        ).scalars().all()
+        texts = [row.text or row.caption or "" for row in rows]
+        stamps = [int(row.created_at.timestamp()) for row in rows if row.created_at]
+        result = await self.ai.summarize(list(reversed(texts)), list(reversed(stamps)))
+        return BotReply(f"🧠 <b>Xulosa</b>\n{result.text}")
+
+    async def timeline(self, tg_id: int) -> BotReply:
+        """TZ 27: relationship timeline (events + activity)."""
+        topic = await self.relay.current_topic(tg_id)
+        if topic is None:
+            return BotReply("Suhbat topilmadi. /new bilan boshlang.")
+        service = RelationshipService(self.session)
+        data = await service.timeline(topic)
+        return BotReply(service.render_timeline(data))
+
+    async def suggest(self, tg_id: int) -> BotReply:
+        """TZ 27: AI reply suggestions for the partner's last message."""
+        topic = await self.relay.current_topic(tg_id)
+        if topic is None:
+            return BotReply("Suhbat topilmadi. /new bilan boshlang.")
+        last = (
+            await self.session.execute(
+                select(Message)
+                .where(Message.topic_id == topic.id, Message.text.is_not(None))
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+        options = await self.ai.suggest_replies(last.text if last else "")
+        lines = [f"{index}. {text}" for index, text in enumerate(options, 1)]
+        return BotReply("💡 <b>Takliflar</b>\n" + "\n".join(lines))
+
+    async def remember(self, tg_id: int, text: str) -> BotReply:
+        """TZ 27: save a memory for the current topic."""
+        topic = await self.relay.writable_topic(tg_id)
+        if topic is None:
+            return BotReply("Yozish uchun faol suhbat yo'q.")
+        if not text.strip():
+            return BotReply("Foydalanish: /remember matn")
+        user = await self.user(tg_id)
+        if user is None:
+            return BotReply("Avval /start ni bosing.")
+        await MemoryService(self.session).add(topic, user.id, text)
+        return BotReply("🧷 Eslatib qo'yildi. /memory bilan ko'ring.")
+
+    async def memory(self, tg_id: int) -> BotReply:
+        topic = await self.relay.current_topic(tg_id)
+        if topic is None:
+            return BotReply("Suhbat topilmadi.")
+        rows = await MemoryService(self.session).list_for(topic)
+        if not rows:
+            return BotReply("Hozircha eslatmalar yo'q. /remember matn bilan qo'shing.")
+        lines = [f"{row.id}. {row.text}" for row in rows]
+        return BotReply("🧷 <b>Eslatmalar</b>\n" + "\n".join(lines))
+
+    async def forget(self, tg_id: int, memory_id: int) -> BotReply:
+        topic = await self.relay.current_topic(tg_id)
+        if topic is None:
+            return BotReply("Suhbat topilmadi.")
+        user = await self.user(tg_id)
+        if user is None:
+            return BotReply("Avval /start ni bosing.")
+        removed = await MemoryService(self.session).forget(topic, memory_id, user.id)
+        if removed:
+            return BotReply("🗑 O'chirildi.")
+        return BotReply("Bunday eslatma topilmadi (faqat o'zingiznikini o'chira olasiz).")
 
     async def undo_last(self, tg_id: int) -> BotReply:
         """Delete the user's most recent relayed message from the topic.

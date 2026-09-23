@@ -100,6 +100,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------- security
     rate_limit_per_minute: int = 20
+    # REST API (panel) rate limit, per IP per minute; 0 disables (TZ 30)
+    api_rate_limit_per_minute: int = 240
     rate_limit_burst: int = 5
     flood_threshold: int = 12
     flood_window_seconds: int = 30
@@ -111,6 +113,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------- ai
     ai_provider: Literal["builtin", "openai"] = "builtin"
     openai_api_key: str = ""
+    # backup targets (TZ 31) — empty disables the adapter
+    s3_bucket: str = ""
+    s3_endpoint_url: str = ""
+    gdrive_access_token: str = ""
+    gdrive_refresh_token: str = ""
+    gdrive_client_id: str = ""
+    gdrive_client_secret: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 

@@ -125,6 +125,21 @@ async def test_unknown_upload_target_keeps_the_local_path(session, tmp_path, mon
     assert result.status == BackupStatus.SUCCESS.value
     assert result.path.startswith(str(tmp_path))
 
+    # PostgreSQL regression: ``target`` was VARCHAR(16), so the history row for
+    # this 17-char name itself failed to insert (SQLite ignores the length and
+    # hid the bug). The row must record the misconfigured name as-is.
+    from sqlalchemy import select
+
+    from app.models.security import BackupHistory
+
+    row = (
+        (await session.execute(select(BackupHistory).order_by(BackupHistory.id.desc())))
+        .scalars()
+        .first()
+    )
+    assert row is not None
+    assert row.target == "somewhere-unknown"
+
 
 # ---------------------------------------------------------------------------
 # notification (TZ 24)

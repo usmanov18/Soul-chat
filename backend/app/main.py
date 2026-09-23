@@ -14,11 +14,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.middleware import RateLimitMiddleware
 from app.api.v1 import (
     analytics,
     auth,
     channel,
     events,
+    export,
     media,
     moderation,
     notifications,
@@ -79,6 +81,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -110,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(channel.router, prefix=prefix)
     app.include_router(notifications.router, prefix=prefix)
     app.include_router(subscriptions.router, prefix=prefix)
+    app.include_router(export.router, prefix=prefix)
     app.include_router(settings_router.router, prefix=prefix)
     app.include_router(system.router, prefix=prefix)
 

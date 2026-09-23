@@ -491,8 +491,7 @@ class RelayService:
         await self.session.flush()
 
         if incoming.file_id:
-            self.session.add(
-                Media(
+            media_row = Media(
                     topic_id=topic.id,
                     message_id=row.id,
                     kind=incoming.content_type,
@@ -504,9 +503,18 @@ class RelayService:
                     duration=incoming.duration,
                     mime_type=incoming.mime_type,
                     caption=incoming.caption,
-                )
             )
+            self.session.add(media_row)
             topic.media_count = (topic.media_count or 0) + 1
+            if incoming.content_type == "photo":
+                # TZ 33: generate the 320px preview once, at receive time. Never
+                # raises - a missing thumbnail must not cost the relay.
+                try:
+                    from app.services.thumbs import ensure_thumbnail
+
+                    await ensure_thumbnail(self.session, media_row, self.gateway)
+                except Exception:  # noqa: BLE001
+                    logger.debug("thumbnail skipped", exc_info=True)
         return row
 
     async def _touch(self, topic: Topic, tg_id: int, row: Message) -> None:

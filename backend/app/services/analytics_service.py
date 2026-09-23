@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
@@ -204,9 +205,10 @@ class AnalyticsService:
         since: datetime | None = None,
         until: datetime | None = None,
         media_only: bool = False,
+        hashtag: str | None = None,
         limit: int = 50,
     ) -> dict[str, list[dict]]:
-        """TZ 23: search by code / username / id / name / date / media / text."""
+        """TZ 23: search by code / username / id / name / date / media / text / hashtag."""
         topics: Select = select(Topic).limit(limit)
         if code:
             topics = topics.where(func.upper(Topic.code) == code.upper())
@@ -234,11 +236,22 @@ class AnalyticsService:
             )
         if media_only:
             messages_stmt = messages_stmt.where(Message.has_media.is_(True))
+        if hashtag:
+            tag = hashtag.lstrip("#").strip()
+            messages_stmt = messages_stmt.where(Message.text.ilike(f"%#{tag}%"))
         if since:
             messages_stmt = messages_stmt.where(Message.created_at >= since)
         if until:
             messages_stmt = messages_stmt.where(Message.created_at <= until)
         message_rows = (await self.session.execute(messages_stmt)).scalars().all()
+        if hashtag:
+            # keep only whole tags: '#bash' must not match '#bashraf'
+            pattern = re.compile(rf"(^|\s)#{re.escape(hashtag.lstrip('#').strip())}(\s|$|[.,!?])")
+            message_rows = [
+                row
+                for row in message_rows
+                if row.text and pattern.search(row.text)
+            ]
 
         return {
             "topics": [

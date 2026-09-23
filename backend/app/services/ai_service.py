@@ -207,6 +207,95 @@ class AIModerator:
             peak_hours=peak,
         )
 
+    async def suggest_replies(self, last_text: str) -> list[str]:
+        """Three reply candidates for the couple's last message (TZ 27).
+
+        With an OpenAI key configured this delegates to the model; the offline
+        fallback is deterministic template replies so the command never fails
+        just because no provider is set.
+        """
+        if settings.openai_api_key:  # pragma: no cover - needs credentials
+            try:
+                return await self._remote_suggest(last_text)
+            except Exception:
+                pass
+        text = (last_text or "").strip()
+        if text.endswith("?"):
+            base = text.rstrip("? ").strip() or "savolingizga"
+            return [
+                f"Hozir javob beraman — {base} haqida o'ylab ko'rdim.",
+                "Ha, albatta! Qachon boshlaymiz?",
+                "Aniq emas, lekin bilib beraman.",
+            ]
+        if not text:
+            return ["Bugun nima qilding? 😊", "Seni sog'indim!", "Kechasi gaplashamizmi?"]
+        return [
+            "Qiziq ekan, davom ettir 😊",
+            "Rozi san bilan!",
+            "Yaxshi, kechasi batafsil gaplashamiz.",
+        ]
+
+    async def _remote_suggest(self, text: str) -> list[str]:  # pragma: no cover - needs credentials
+        import openai
+
+        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": "Suggest 3 short Telegram reply messages in Uzbek, one per line, no numbering."},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.8,
+            max_tokens=120,
+        )
+        lines = [line.strip("-• ") for line in (response.choices[0].message.content or "").splitlines()]
+        return [line for line in lines if line][:3]
+
+    async def moderate_image(
+        self, *, caption: str = "", file_bytes: bytes | None = None
+    ) -> Verdict:
+        """Image safety (TZ 27: 18+ media).
+
+        Caption text goes through the same pipeline as messages. Pixels are only
+        classified when an OpenAI key is configured (vision model); without it
+        the verdict is based on the caption alone and the media keeps its
+        ``nsfw`` flags untouched — the panel shows what was actually checked.
+        """
+        verdict = await self.moderate(caption or "", user_id=0)
+        if verdict.action == "allow" and settings.openai_api_key and file_bytes:  # pragma: no cover
+            try:
+                return await self._remote_image_check(file_bytes, caption)
+            except Exception:
+                pass
+        return verdict
+
+    async def _remote_image_check(self, file_bytes: bytes, caption: str) -> Verdict:  # pragma: no cover
+        import base64
+
+        import openai
+
+        client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        encoded = base64.b64encode(file_bytes).decode("ascii")
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Is this image safe for a general-audience chat? Answer only: allow, warn or block."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
+                ]},
+            ],
+            max_tokens=8,
+        )
+        answer = (response.choices[0].message.content or "allow").strip().lower()
+        action = answer if answer in {"allow", "warn", "block"} else "allow"
+        return Verdict(
+            action=action,
+            risk={"allow": 0.0, "warn": 0.5, "block": 0.9}[action],
+            labels=["18+"] if action != "allow" else [],
+            scores={"caption_nsfw": self._word_hit(caption, NSFW_WORDS)},
+            provider="vision",
+        )
+
     async def analyze_emotion(self, text: str) -> str:
         mix = self.emotion_mix([text]) if text else {}
         if not mix:

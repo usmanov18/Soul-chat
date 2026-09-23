@@ -5,16 +5,17 @@ from __future__ import annotations
 import time
 
 from fastapi import APIRouter, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.api.deps import AdminUser, SessionDep
-from app.api.schemas import BackupOut, WebhookIn
+from app.api.schemas import BackupOut, BackupVerifyIn, WebhookIn
 from app.core import metrics as app_metrics
 from app.core.cache import cache
 from app.core.config import settings
 from app.core.db import table_names
 from app.core.logging import get_logger
 from app.enums import AuditAction
+from app.models.security import BackupHistory
 from app.services.audit import AuditService
 from app.services.backup_service import BackupService
 
@@ -69,6 +70,51 @@ async def backup_history(session: SessionDep, user: AdminUser) -> list[dict]:
         }
         for r in rows
     ]
+
+
+@router.get("/backup/{backup_id}/file")
+async def backup_file(backup_id: int, session: SessionDep, user: AdminUser) -> FileResponse:
+    from pathlib import Path as FilePath
+
+    from fastapi import HTTPException
+
+    row = await session.get(BackupHistory, backup_id)
+    if row is None or not row.path:
+        raise HTTPException(404, "Backup not found")
+    path = FilePath(row.path)
+    if not path.is_file():
+        raise HTTPException(404, "Backup file is gone from disk")
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type="application/gzip" if path.suffix == ".gz" else "application/octet-stream",
+    )
+
+
+@router.post("/backup/verify")
+async def backup_verify(payload: BackupVerifyIn, session: SessionDep, user: AdminUser) -> dict:
+    """Recompute the checksum so an operator can trust a stored backup."""
+    import hashlib
+    from pathlib import Path as FilePath
+
+    from fastapi import HTTPException
+
+    row = await session.get(BackupHistory, payload.id)
+    if row is None:
+        raise HTTPException(404, "Backup not found")
+    if not row.checksum:
+        return {"id": payload.id, "status": "no_checksum", "expected": None, "actual": None}
+    if not row.path or not FilePath(row.path).is_file():
+        return {"id": payload.id, "status": "missing_file", "expected": row.checksum, "actual": None}
+    digest = hashlib.sha256(FilePath(row.path).read_bytes()).hexdigest()
+    status = "ok" if digest == row.checksum else "mismatch"
+    await AuditService(session).log(
+        AuditAction.BACKUP if status == "ok" else "backup.verify_failed",
+        actor=user,
+        message=f"verify backup #{payload.id}: {status}",
+        source="api",
+    )
+    return {"id": payload.id, "status": status, "expected": row.checksum, "actual": digest}
 
 
 @router.post("/webhook")

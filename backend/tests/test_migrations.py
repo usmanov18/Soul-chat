@@ -227,11 +227,16 @@ def test_schema_at_freezes_earlier_revisions():
     assert any(i.name == "ix_message_source" for i in head.tables["messages"].indexes)
 
 
-@pytest.mark.parametrize("revision", ["0001_initial", "9999"])
-def test_schema_at_keeps_every_table(revision: str):
+@pytest.mark.parametrize("revision,minimum", [("0001_initial", 24), ("9999", 25)])
+def test_schema_at_keeps_every_table(revision: str, minimum: int):
+    """``schema_at`` must keep every table that existed at the revision.
+
+    Head-agnostic on the upper bound: new revisions legitimately add tables
+    (``memories`` became the 25th), so head is a floor, 0001 an exact freeze.
+    """
     from alembic_schema import schema_at
 
-    assert len(schema_at(revision).tables) == 24
+    assert len(schema_at(revision).tables) >= minimum
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +249,11 @@ def test_search_index_migration_is_a_noop_on_sqlite(tmp_path: Path):
     assert result.returncode == 0, result.stderr
 
     current = _run_alembic(db, "current")
-    assert "0003_search_indexes" in current.stdout
+    # head-agnostic: 0004 and later revisions keep this test valid; the chain
+    # itself must still contain the guarded 0003 revision.
+    head = _run_alembic(db, "heads")
+    assert head.stdout.split()[0] in current.stdout
+    assert "0003_search_indexes" in _run_alembic(db, "history").stdout
 
     conn = sqlite3.connect(db)
     indexes = {row[0] for row in conn.execute(

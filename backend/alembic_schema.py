@@ -38,6 +38,9 @@ LATER_REVISION_OBJECTS: dict[str, dict[str, Any]] = {
         },
         "indexes": {"ix_message_source", "ix_messages_source_message_id"},
     },
+    "0005_memories": {
+        "tables": {"memories"},
+    },
 }
 
 
@@ -49,9 +52,18 @@ def _columns_removed(up_to: str) -> dict[str, tuple[str, ...]]:
         # including ``up_to`` belongs in the schema; everything after does not.
         if revision <= up_to:
             continue
-        for table, names in spec["columns"].items():
+        for table, names in spec.get("columns", {}).items():
             columns.setdefault(table, []).extend(names)
     return {table: tuple(names) for table, names in columns.items()}
+
+
+def _tables_removed(up_to: str) -> set[str]:
+    names: set[str] = set()
+    for revision, spec in LATER_REVISION_OBJECTS.items():
+        if revision <= up_to:
+            continue
+        names.update(spec.get("tables", ()))
+    return names
 
 
 def _indexes_removed(up_to: str) -> set[str]:
@@ -59,7 +71,7 @@ def _indexes_removed(up_to: str) -> set[str]:
     for revision, spec in LATER_REVISION_OBJECTS.items():
         if revision <= up_to:
             continue
-        names.update(spec["indexes"])
+        names.update(spec.get("indexes", ()))
     return names
 
 
@@ -70,7 +82,10 @@ def schema_at(revision: str) -> MetaData:
     original 24 tables.
     """
     metadata = MetaData()
+    removed_tables = _tables_removed(revision)
     for table in Base.metadata.sorted_tables:
+        if table.name in removed_tables:
+            continue
         table.to_metadata(metadata)
 
     for table_name, column_names in _columns_removed(revision).items():

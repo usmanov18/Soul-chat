@@ -64,6 +64,10 @@ celery_app.conf.update(
         "subscription-sweep": {
             "task": "app.tasks.subscription_sweep",
             "schedule": crontab(minute="*/15"),
+        "birthday-sweep": {
+            "task": "app.tasks.birthday_sweep",
+            "schedule": crontab(hour=9, minute=0),
+        },
         },
     },
 )
@@ -180,6 +184,14 @@ async def _daily_backup() -> dict[str, Any]:
         return {"status": result.status, "path": result.path, "size": result.size}
 
 
+async def _birthday_sweep() -> dict[str, Any]:
+    from app.core.db import session_scope
+    from app.services.notification import NotificationService
+
+    async with session_scope() as session:
+        return await NotificationService(session, await _gateway()).birthday_sweep()
+
+
 async def _subscription_sweep() -> dict[str, Any]:
     from sqlalchemy import select
 
@@ -231,6 +243,11 @@ def daily_snapshot() -> dict[str, Any]:
 @celery_app.task(name="app.tasks.daily_backup")
 def daily_backup() -> dict[str, Any]:
     return _run(_daily_backup)
+
+
+@celery_app.task(name="app.tasks.birthday_sweep")
+def birthday_sweep() -> dict[str, Any]:
+    return _run(_birthday_sweep)
 
 
 @celery_app.task(name="app.tasks.subscription_sweep")

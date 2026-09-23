@@ -134,6 +134,20 @@ class Event(TimestampMixin, Base):
     topic: Mapped[Topic] = relationship(back_populates="events")  # noqa: F821
 
 
+class Memory(TimestampMixin, Base):
+    """A fact the couple saved on purpose via /remember (TZ 27)."""
+
+    __tablename__ = "memories"
+    __table_args__ = (Index("ix_memory_topic", "topic_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    topic_id: Mapped[int] = mapped_column(ForeignKey("topics.id", ondelete="CASCADE"), index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    text: Mapped[str] = mapped_column(Text)
+
+    topic: Mapped[Topic] = relationship()  # noqa: F821
+
+
 class ChannelPost(TimestampMixin, Base):
     __tablename__ = "channel_posts"
 
