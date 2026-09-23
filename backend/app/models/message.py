@@ -76,6 +76,8 @@ class Message(TimestampMixin, Base):
     moderation_action: Mapped[str] = mapped_column(String(16), default="allow")
     relayed: Mapped[bool] = mapped_column(Boolean, default=False)
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # D1: /timer sets this; the beat sweep deletes the topic copy when it passes
+    self_destruct_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     topic: Mapped[Topic] = relationship(back_populates="messages")  # noqa: F821
     media: Mapped[list[Media]] = relationship(

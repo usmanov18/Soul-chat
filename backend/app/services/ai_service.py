@@ -296,6 +296,28 @@ class AIModerator:
             provider="vision",
         )
 
+    async def transcribe(self, audio: bytes, *, language: str | None = None) -> str | None:
+        """D2: voice -> text (OpenAI Whisper when a key is configured).
+
+        Returns ``None`` when there is no provider or the call fails — the
+        archive simply keeps describing the file as "voice", exactly as before.
+        """
+        if not settings.openai_api_key:  # pragma: no cover - needs credentials
+            return None
+        try:
+            import openai
+
+            client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+            response = await client.audio.transcriptions.create(
+                model=settings.openai_stt_model,
+                file=("voice.ogg", audio, "audio/ogg"),
+                language=language,
+            )
+            return (response.text or "").strip() or None
+        except Exception:  # noqa: BLE001 - transcription is best-effort
+            logger.warning("transcription failed", exc_info=True)
+            return None
+
     async def analyze_emotion(self, text: str) -> str:
         mix = self.emotion_mix([text]) if text else {}
         if not mix:

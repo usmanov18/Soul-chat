@@ -45,8 +45,11 @@ uzatadi. Tafsilot va MTProto nega rad etilgani:
   CSV/JSON export, light/dark mavzu
 - **AI buyruqlari** — `/summary`, `/timeline`, `/suggest`, `/remember`/`/memory`
 - **Xavfsizlik** — REST API rate limit (per-IP), fake-account skor, birthday sweep
+- **Mahsulot g'oyalari (D-block)** — `/timer` o'z-o'zini yo'q qilish, ovoz transkripsiyasi arxivda,
+  `/appeal` apellyatsiya oqimi (panel qarori bilan), QR taklif, ochiq statistika `/stats/public`,
+  sherik almashtirish oqimi
 - **Monitoring** — Prometheus `/metrics`, Grafana dashboard, Sentry, audit log
-- **Testlar** — backend 385 (pytest, SQLite + PostgreSQL), admin panel 64 (vitest)
+- **Testlar** — backend 396 (pytest, SQLite + PostgreSQL), admin panel 67 (vitest)
 
 ## Texnologiyalar
 
@@ -78,7 +81,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 python manage.py initdb && python manage.py seed
 uvicorn app.main:app --reload --port 8000   # /docs
-pytest -q                                   # 385 test
+pytest -q                                   # 396 test
 ```
 
 ## Bot buyruqlari
@@ -110,7 +113,7 @@ backend/
     bot/           aiogram adapteri + middlewares
     api/v1/        REST endpointlari
     tasks.py       celery vazifalari
-  tests/           385 test (Telegram/Redis/Postgres'siz)
+  tests/           396 test (Telegram/Redis/Postgres'siz)
 frontend/          Next.js admin panel
 deploy/            nginx, prometheus, grafana provisioning
 docs/              texnik tahlil, arxitektura, DB, deploy, API
@@ -128,7 +131,7 @@ docs/              texnik tahlil, arxitektura, DB, deploy, API
 ## Testlar
 
 ```
-385 passed
+396 passed
 ```
 
 Testlar haqiqiy servis qatlamini ishga tushiradi: kod generatsiyasi, relay ruxsat

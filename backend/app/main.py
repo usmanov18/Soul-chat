@@ -24,6 +24,7 @@ from app.api.v1 import (
     media,
     moderation,
     notifications,
+    stats,
     subscriptions,
     system,
     topics,
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications.router, prefix=prefix)
     app.include_router(subscriptions.router, prefix=prefix)
     app.include_router(export.router, prefix=prefix)
+    app.include_router(stats.router, prefix=prefix)
     app.include_router(settings_router.router, prefix=prefix)
     app.include_router(system.router, prefix=prefix)
 

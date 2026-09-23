@@ -128,7 +128,8 @@ async def cmd_new(message: Message, **data: Any) -> None:
 
 @router.message(Command("invite"))
 async def cmd_invite(message: Message, **data: Any) -> None:
-    await _render(message, await _service(data).invite(message.from_user.id))
+    # D6: the QR rides along when qrcode is installed; the link is the fallback
+    await _render(message, await _service(data).invite_qr(message.from_user.id))
 
 
 @router.message(Command("close"))
@@ -220,6 +221,16 @@ async def cmd_moderate(message: Message, command: CommandObject, **data: Any) ->
         return
     action, target, reason = parsed
     await _render(message, await _service(data).moderate(message.from_user.id, action, target, reason))
+
+
+@router.message(Command("timer"))
+async def cmd_timer(message: Message, command: CommandObject, **data: Any) -> None:
+    await _render(message, await _service(data).timer(message.from_user.id, command_arg(command.args) or ""))
+
+
+@router.message(Command("appeal"))
+async def cmd_appeal(message: Message, command: CommandObject, **data: Any) -> None:
+    await _render(message, await _service(data).appeal(message.from_user.id, command_arg(command.args) or ""))
 
 
 @router.message(Command("summary"))

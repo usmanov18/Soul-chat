@@ -12,6 +12,7 @@ import io
 import json
 import os
 import zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -64,13 +65,19 @@ class ArchiveResult:
 
 class ArchiveService:
     def __init__(
-        self, session: AsyncSession, gateway: TelegramGateway | None = None
+        self,
+        session: AsyncSession,
+        gateway: TelegramGateway | None = None,
+        transcriber: Callable[[bytes], Awaitable[str | None]] | None = None,
     ) -> None:
         self.session = session
         self.audit = AuditService(session)
         # without a transport the transcript is still produced, only the media
         # bundle is skipped — the archive must never fail outright
         self.gateway = gateway
+        # D2: optional voice->text hook (Whisper in production). Best-effort:
+        # a failing transcriber degrades to the plain "voice" label.
+        self.transcriber = transcriber
 
     # ------------------------------------------------------------------
     async def export(self, topic: Topic, requested_by: User | None = None,
@@ -86,8 +93,10 @@ class ArchiveService:
         base = f"soulchat-{slug}-{stamp}"
         zip_path = os.path.join(settings.archive_dir, f"{base}.zip")
 
+        voice_texts = await self._voice_texts(rows)
+
         payloads: dict[str, bytes] = {
-            "json": self._json(topic, rows, senders).encode("utf-8"),
+            "json": self._json(topic, rows, senders, voice_texts).encode("utf-8"),
             "txt": self._txt(topic, rows, senders).encode("utf-8"),
             "html": self._html(topic, rows, senders).encode("utf-8"),
             "pdf": build_transcript_pdf(
@@ -250,7 +259,52 @@ class ArchiveService:
         return rows, senders
 
     # ---------------------------------------------------------- renderers
-    def _json(self, topic: Topic, rows: list[Message], senders: dict[int, str]) -> str:
+    async def _voice_texts(self, rows: list[Message]) -> dict[int, str]:
+        """D2: transcribe voice messages when a transcriber is wired in.
+
+        The file id lives on the related ``Media`` row (``Message.file_id`` is
+        only populated for direct sends), so voices are resolved through it.
+        """
+        if self.transcriber is None or self.gateway is None:
+            return {}
+        voice_by_message = {
+            row.message_id: row.file_id
+            for row in (
+                await self.session.execute(
+                    select(Media).where(
+                        Media.message_id.in_([r.id for r in rows]),
+                        Media.kind == "voice",
+                    )
+                )
+            ).scalars().all()
+        }
+        texts: dict[int, str] = {}
+        for row in rows:
+            file_id = voice_by_message.get(row.id)
+            if not file_id:
+                continue
+            try:
+                audio = await self.gateway.get_file(file_id)
+            except Exception:  # noqa: BLE001
+                continue
+            if not audio:
+                continue
+            try:
+                text = await self.transcriber(audio)
+            except Exception:  # noqa: BLE001
+                text = None
+            if text:
+                texts[row.id] = text
+        return texts
+
+    def _json(
+        self,
+        topic: Topic,
+        rows: list[Message],
+        senders: dict[int, str],
+        voice_texts: dict[int, str] | None = None,
+    ) -> str:
+        voice_texts = voice_texts or {}
         payload = {
             "topic": {
                 "code": topic.code,
@@ -277,6 +331,7 @@ class ArchiveService:
                     "type": row.content_type,
                     "text": row.text,
                     "caption": row.caption,
+                    "voice_text": voice_texts.get(row.id),
                     "file_id": row.file_id,
                     "media": [
                         {

@@ -19,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/panel/events", label: "Eventlar", icon: "📅" },
   { href: "/panel/gallery", label: "Galereya", icon: "🌸" },
   { href: "/panel/subscriptions", label: "Obunalar", icon: "🔔" },
+  { href: "/panel/appeals", label: "Apellyatsiyalar", icon: "📨" },
   { href: "/panel/moderation", label: "Audit log", icon: "🧾" },
   { href: "/panel/backup", label: "Zaxira", icon: "💾" },
   { href: "/panel/settings", label: "Sozlamalar", icon: "⚙️" },

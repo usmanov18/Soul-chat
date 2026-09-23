@@ -50,6 +50,7 @@ describe("UsersView actions", () => {
     const moderate = vi
       .spyOn(api.endpoints, "moderate")
       .mockResolvedValue({ user_id: 1, warns: 2 });
+    const usersSpy = vi.spyOn(api.endpoints, "users").mockResolvedValue([userRow]);
     const prompt = vi.spyOn(window, "prompt").mockReturnValue("apellyatsiya");
 
     render(<UsersView />);
@@ -59,7 +60,7 @@ describe("UsersView actions", () => {
     expect(moderate).toHaveBeenCalledWith({ tg_id: 111, action: "unban", reason: "apellyatsiya" });
     expect(prompt).toHaveBeenCalled();
     // the users list is reloaded after the action
-    await waitFor(() => expect(api.endpoints.users.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(usersSpy.mock.calls.length).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText(/unban/)).toBeTruthy();
   });
 

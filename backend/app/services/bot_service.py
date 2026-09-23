@@ -9,8 +9,10 @@ without a network connection.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -27,6 +29,7 @@ from app.enums import (
     TopicStatus,
 )
 from app.models.message import Message
+from app.models.security import BanAppeal
 from app.models.topic import Topic
 from app.models.user import User
 from app.services.ai_service import AIModerator
@@ -352,6 +355,90 @@ class SoulChatBot:
         if removed:
             return BotReply("🗑 O'chirildi.")
         return BotReply("Bunday eslatma topilmadi (faqat o'zingiznikini o'chira olasiz).")
+
+    # -------------------------------------------------- D-block commands
+    _DURATION = re.compile(r"^\s*(\d{1,4})\s*(m|h|d)\s*$", re.IGNORECASE)
+
+    async def timer(self, tg_id: int, duration: str) -> BotReply:
+        """D1: mark the user's last relayed message to be deleted later."""
+        topic = await self.relay.writable_topic(tg_id)
+        if topic is None:
+            return BotReply("Yozish uchun faol suhbat yo'q.")
+        match = self._DURATION.match(duration or "")
+        if match is None:
+            return BotReply("Foydalanish: /timer 30m  (yoki 12h, 3d)")
+        amount, unit = int(match.group(1)), match.group(2).lower()
+        seconds = amount * {"m": 60, "h": 3600, "d": 86400}[unit]
+        if seconds > 7 * 86400:
+            return BotReply("Maksimal taymer: 7d.")
+        user = await self.user(tg_id)
+        if user is None:
+            return BotReply("Avval /start ni bosing.")
+        row = (
+            await self.session.execute(
+                select(Message)
+                .where(Message.topic_id == topic.id, Message.sender_id == user.id)
+                .order_by(Message.id.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if row is None:
+            return BotReply("Sizning xabaringiz topilmadi.")
+        row.self_destruct_at = utcnow() + timedelta(seconds=seconds)
+        await self.session.flush()
+        return BotReply(f"⏲ Xabar {amount}{unit} dan keyin o'chib ketadi.")
+
+    async def appeal(self, tg_id: int, text: str) -> BotReply:
+        """D5: banned/muted user asks the staff to reconsider."""
+        if not text.strip():
+            return BotReply("Foydalanish: /appeal murojaat matni")
+        user = await self.user(tg_id)
+        pending = (
+            await self.session.execute(
+                select(BanAppeal).where(BanAppeal.tg_id == tg_id, BanAppeal.status == "pending")
+            )
+        ).scalars().first()
+        if pending is not None:
+            return BotReply("Murojaatingiz allaqachon ko'rib chiqilmoqda.")
+        self.session.add(
+            BanAppeal(user_id=user.id if user else None, tg_id=tg_id, text=text.strip()[:1000])
+        )
+        await self.session.flush()
+        await self.audit.log(
+            "appeal.create",
+            actor=user,
+            message=f"appeal from {tg_id}: {text.strip()[:80]}",
+        )
+        return BotReply("📨 Murojaatingiz moderatorlarga yuborildi.")
+
+    async def invite_qr(self, tg_id: int) -> BotReply | None:
+        """D6: QR for the fresh invite link, when ``qrcode`` is installed."""
+        topic = await self.relay.writable_topic(tg_id)
+        if topic is None:
+            return BotReply("Sizda faol suhbat yo'q. /new bilan yarating.")
+        user = await self.user(tg_id)
+        if user is None or topic.owner_id != user.id:
+            return BotReply("Faqat suhbat egasi sherik taklif qila oladi.")
+        try:
+            created = await self.invites.create(topic, user)
+        except InviteError as exc:
+            return BotReply(f"⚠️ {exc}")
+        reply = BotReply(f"🔗 Taklif havolasi (bitta martalik):\n{created.url}")
+        link = created.url
+        if not link:
+            return reply
+        try:
+            import io
+
+            import qrcode
+
+            image = qrcode.make(link)
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            reply.document = (buffer.getvalue(), "invite-qr.png")
+        except Exception:  # noqa: BLE001 - QR is decoration, the link is the point
+            pass
+        return reply
 
     async def undo_last(self, tg_id: int) -> BotReply:
         """Delete the user's most recent relayed message from the topic.

@@ -64,6 +64,10 @@ celery_app.conf.update(
         "subscription-sweep": {
             "task": "app.tasks.subscription_sweep",
             "schedule": crontab(minute="*/15"),
+        "self-destruct-sweep": {
+            "task": "app.tasks.self_destruct_sweep",
+            "schedule": 60.0,
+        },
         "birthday-sweep": {
             "task": "app.tasks.birthday_sweep",
             "schedule": crontab(hour=9, minute=0),
@@ -184,6 +188,46 @@ async def _daily_backup() -> dict[str, Any]:
         return {"status": result.status, "path": result.path, "size": result.size}
 
 
+async def _self_destruct_sweep() -> dict[str, Any]:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.core.db import session_scope
+    from app.models.message import Message
+    from app.models.topic import Topic
+
+    now = datetime.now(UTC)
+    deleted = 0
+    async with session_scope() as session:
+        rows = (
+            await session.execute(
+                select(Message).where(
+                    Message.self_destruct_at.is_not(None),
+                    Message.self_destruct_at <= now,
+                    Message.deleted.is_(False),
+                )
+            )
+        ).scalars().all()
+        if not rows:
+            return {"deleted": 0}
+
+        gateway = await _gateway()
+        topics = {}
+        for row in rows:
+            topics[row.topic_id] = None
+        for row in rows:
+            topic = topics.get(row.topic_id)
+            if topic is None:
+                topics[row.topic_id] = topic = await session.get(Topic, row.topic_id)
+            chat_id = topic.chat_id if topic else None
+            if chat_id and row.tg_message_id:
+                await gateway.delete_message(chat_id, row.tg_message_id)
+            row.deleted = True
+            deleted += 1
+    return {"deleted": deleted}
+
+
 async def _birthday_sweep() -> dict[str, Any]:
     from app.core.db import session_scope
     from app.services.notification import NotificationService
@@ -243,6 +287,11 @@ def daily_snapshot() -> dict[str, Any]:
 @celery_app.task(name="app.tasks.daily_backup")
 def daily_backup() -> dict[str, Any]:
     return _run(_daily_backup)
+
+
+@celery_app.task(name="app.tasks.self_destruct_sweep")
+def self_destruct_sweep() -> dict[str, Any]:
+    return _run(_self_destruct_sweep)
 
 
 @celery_app.task(name="app.tasks.birthday_sweep")

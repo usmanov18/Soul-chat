@@ -676,3 +676,37 @@ moslanmagan har bir bandni yopadi. Har biri test bilan.
 | Frontend testlar | **64** (+5) |
 | `ruff` / `tsc --noEmit` / `next build` | toza (15 sahifa) |
 | Migratsiyalar | 0005_memories |
+
+---
+
+# Sakkizinchi davra (2026-09-23) — D-block: so'nggi mahsulot g'oyalari
+
+docs/07 D ro'yxatida qolgan bandlar yopildi. D3 (`/summary`) va D4 (galereya)
+avvalgi davralarda bajarilgandi.
+
+| Band | Nima qilindi | Qayerda |
+|---|---|---|
+| **D1** | `/timer 30m\|12h\|3d` — foydalanuvchi oxirgi xabarini belgilaydi; beat har 60s muddati o'tganlarni Telegram'dan o'chirib `deleted=True` qiladi. `messages.self_destruct_at` + `0006` migratsiya | bot `timer()`, `tasks.self_destruct_sweep` |
+| **D2** | Arxivda ovozli xabarlar transkripsiyasi: `ArchiveService(transcriber=...)` hook — OpenAI Whisper (kalit bo'lsa) yoki ixtiyoriy funksiya; JSON'da `voice_text`. file_id `Media` jadvalidan olinadi (Message'da emas) | `ai.transcribe`, `archive._voice_texts` |
+| **D5** | `/appeal matn` — ban/mute foydalanuvchi murojaati (`ban_appeals` jadvali, `0006`). Panel "Apellyatsiyalar" sahifasi: approve (audited unban, faqat admin) / reject; takroriy qaror 409 | bot + REST + `/panel/appeals` |
+| **D6** | `/invite` endi QR PNG ham yuboradi (`qrcode[pil]` requirements'da); kutubxona yo'q bo'lsa faqat havola — hech qachon yiqilmaydi | bot `invite_qr()` |
+| **D7** | `GET /api/v1/stats/public` — tokensiz (rate limit ostida): foydalanuvchilar, juftliklar, bugungi suhbat/xabarlar. Ismsiz, faqat raqamlar | `api/v1/stats.py` |
+| **D8** | Sherik almashtirish oqimi test bilan mahkamlandi: partner `leave` → owner yangi taklif → uchinchi foydalanuvchi qo'shiladi; eski ishtirokchi `left` | `test_owner_can_reinvite_after_partner_leaves` |
+
+## Yo'l davomida topilgan
+
+- **`Message.file_id` relay'da to'ldirilmaydi** — faqat `Media`'da. D1 shartini
+  `Media.message_id` orqali yechish kerak edi; `sender_id` esa internal `users.id`
+  ekan (tg_id emas) — timer xabarni shu bo'yicha topadi.
+
+## Holat
+
+| Ko'rsatkich | Qiymat |
+|---|---|
+| Backend testlar (SQLite) | **396** (+11) |
+| Frontend testlar | **67** (+3) |
+| `ruff` / `tsc` / `next build` | toza (16 sahifa) |
+| Migratsiyalar | 0006_timer_and_appeals |
+
+D-block endi to'liq yopilgan. Loyihada TZ + audit tavsiyalari + mahsulot
+g'oyalarining barchasi amalga oshirilgan.

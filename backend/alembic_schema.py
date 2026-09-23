@@ -41,6 +41,10 @@ LATER_REVISION_OBJECTS: dict[str, dict[str, Any]] = {
     "0005_memories": {
         "tables": {"memories"},
     },
+    "0006_timer_and_appeals": {
+        "tables": {"ban_appeals"},
+        "columns": {"messages": ("self_destruct_at",)},
+    },
 }
 
 

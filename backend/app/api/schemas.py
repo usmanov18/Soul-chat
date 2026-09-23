@@ -109,6 +109,11 @@ class SearchRequest(BaseModel):
 
 
 # --------------------------------------------------------------- moderation
+class AppealDecision(BaseModel):
+    decision: str  # approve | reject
+    note: str | None = None
+
+
 class ModerationRequest(BaseModel):
     action: str  # warn | mute | ban | freeze | unfreeze | restore
     tg_id: int

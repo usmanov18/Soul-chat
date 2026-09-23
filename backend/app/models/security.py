@@ -88,6 +88,22 @@ class BackupHistory(TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
+class BanAppeal(TimestampMixin, Base):
+    """D5: a banned/muted user asks the staff to reconsider."""
+
+    __tablename__ = "ban_appeals"
+    __table_args__ = (Index("ix_appeal_status", "status", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    tg_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|approved|rejected
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(Text)
+
+
 class Session(TimestampMixin, Base):
     """Admin panel session (JWT bookkeeping / revocation)."""
 

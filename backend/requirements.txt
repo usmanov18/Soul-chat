@@ -20,6 +20,7 @@ aiofiles>=24.1
 # sentry-sdk[fastapi]>=2.0
 # boto3>=1.34
 Pillow>=10.0  # Event Gallery overlay (TZ 15)
+qrcode[pil]>=7.4   # D6: QR kodli taklif rasmi
 
 # Development / test
 pytest>=8.2

@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------- ai
     ai_provider: Literal["builtin", "openai"] = "builtin"
     openai_api_key: str = ""
+    openai_stt_model: str = "whisper-1"
     # backup targets (TZ 31) — empty disables the adapter
     s3_bucket: str = ""
     s3_endpoint_url: str = ""

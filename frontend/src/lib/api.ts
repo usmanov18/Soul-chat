@@ -160,6 +160,16 @@ export type SubscriptionRow = {
   checked_at: string | null;
 };
 
+export type AppealRow = {
+  id: number;
+  tg_id: number;
+  text: string;
+  status: string;
+  decided_at: string | null;
+  decision_note: string | null;
+  created_at: string | null;
+};
+
 export type BackupRow = {
   id: number;
   target: string;
@@ -274,6 +284,13 @@ export const endpoints = {
     api<{ user_id: number; warns: number }>("/api/v1/moderation/action", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  appeals: (status = "pending") =>
+    api<AppealRow[]>(`/api/v1/moderation/appeals?status=${encodeURIComponent(status)}`),
+  decideAppeal: (id: number, decision: "approve" | "reject", note = "") =>
+    api<{ id: number; status: string }>(`/api/v1/moderation/appeals/${id}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision, note }),
     }),
   backupVerify: (id: number) =>
     api<{ id: number; status: string; expected: string | null; actual: string | null }>(

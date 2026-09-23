@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import AdminUser, SessionDep, StaffUser
-from app.api.schemas import ModerationRequest, WarnOut
+from app.api.schemas import AppealDecision, ModerationRequest, WarnOut
 from app.core.logging import get_logger
 from app.enums import AuditAction
 from app.models.log import AuditLog
-from app.models.security import SpamEvent
+from app.models.security import BanAppeal, SpamEvent
 from app.models.user import User
+from app.services.audit import AuditService
 from app.services.security_service import SecurityService
 from app.services.telegram_gateway import FakeGateway
 from app.services.topic_service import TopicService
@@ -119,6 +122,60 @@ async def audit_logs(
         }
         for r in rows
     ]
+
+
+@router.get("/appeals")
+async def list_appeals(
+    session: SessionDep, user: StaffUser, status: str = "pending", limit: int = Query(default=50, le=200)
+) -> list[dict]:
+    """D5: ban/mute appeals awaiting a decision."""
+    stmt = select(BanAppeal).where(BanAppeal.status == status).order_by(BanAppeal.id.desc()).limit(limit)
+    if status == "all":
+        stmt = select(BanAppeal).order_by(BanAppeal.id.desc()).limit(limit)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "tg_id": r.tg_id,
+            "text": r.text,
+            "status": r.status,
+            "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+            "decision_note": r.decision_note,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/appeals/{appeal_id}/decision")
+async def decide_appeal(
+    appeal_id: int, payload: AppealDecision, session: SessionDep, user: StaffUser
+) -> dict:
+    """D5: approve (lift the ban through the audited unban) or reject."""
+    appeal = await session.get(BanAppeal, appeal_id)
+    if appeal is None:
+        raise HTTPException(404, "Appeal not found")
+    if appeal.status != "pending":
+        raise HTTPException(409, "Appeal already decided")
+
+    if payload.decision == "approve":
+        from app.enums import Role
+
+        if user.role == Role.MODERATOR.value:
+            raise HTTPException(403, "Only admins can lift a ban")
+        await SecurityService(session).unban(appeal.tg_id, user, payload.note or "appeal approved")
+    appeal.status = "approved" if payload.decision == "approve" else "rejected"
+    appeal.decided_by = user.id
+    appeal.decided_at = datetime.now(UTC)
+    appeal.decision_note = payload.note
+    await session.flush()
+    await AuditService(session).log(
+        f"appeal.{payload.decision}",
+        actor=user,
+        message=f"appeal #{appeal.id} from {appeal.tg_id}: {payload.decision}",
+        source="api",
+    )
+    return {"id": appeal.id, "status": appeal.status}
 
 
 @router.get("/fake-accounts")
