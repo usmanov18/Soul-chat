@@ -544,3 +544,54 @@ tekshiradi. Asl bug'ni ikkinchi tomondan ushlaydi.
 | Backend testlar | **353** |
 | Frontend testlar | 47 |
 | ruff | toza |
+---
+
+# Oltinchi davra (2026-09-23) — TZ 28: panelning yetishmayotgan sahifalari
+
+TZ 28 ro'yxatidan panelda **umuman ko'rinishi berilmagan** bo'limlar bor edi:
+Media, Events, Channel Posts, Subscriptions. Ma'lumot bazasi jadvallari
+(`media`, `events`, `channel_posts`, `notifications`, `subscriptions`) mavjud,
+lekin na REST endpoint, na sahifa. AI funksiyalari (TZ 27) ataylab qoldirildi —
+buyurtmachi "haqiqiy funksiya va admin panel"ni so'radi.
+
+## Qo'shilgani
+
+| Qatlam | Nima | Izoh |
+|---|---|---|
+| `GET /api/v1/media` | media kutubxonasi | topic kodi bilan join; `kind`, `topic_code`, `nsfw` filtrlari |
+| `GET /api/v1/events` | eventlar ro'yxati | `kind` / `status` / `topic_code` bo'yicha |
+| `GET /api/v1/channel-posts` | kanal postlari (TZ 14/15 galereya) | `topic_id` SET NULL bo'lgani uchun **outer join** — topigi o'chgan postlar ham ko'rinadi, `failed_reason` bilan |
+| `GET /api/v1/notifications` | bildirishnomalar oqimi | foydalanuvchi `tg_id`/`username` bilan join; `status`/`kind` filtrlari |
+| `GET /api/v1/subscriptions` | majburiy obunalar overview (TZ 5) | kim guruh/kanalga a'zo emas — bitta so'rovda; `is_member` filtri |
+| Panel: `/panel/media` | kartochka grid | tur ikonkasi, o'lcham (`formatBytes`), WxH, davomiylik, `kanalda`/`nsfw` chiplari |
+| Panel: `/panel/events` | jadval | turi/nomi/suhbat/muddat/joy/holat, checklist progress `1/2` |
+| Panel: `/panel/gallery` | post kartochkalari | `chop etildi` yoki `xato: ...` chipi bilan |
+| Panel: `/panel/subscriptions` | jadval | a'zo / obuna yo'q chipi |
+| Panel: `/panel/backup` | tarix + qo'lda ishga tushirish | `POST /backup` natijasi xabar sifatida |
+| `Nav` | 5 yangi band | Media, Eventlar, Galereya, Obunalar, Zaxira |
+
+## Yo'l davomida topilgan/tuzatilgan
+
+1. **`api.test.ts` da 3 ta tip xatosi** — `JSON.parse(init.body)` `BodyInit | null`
+   ni parse qilardi; `String(init.body)` bilan mahkamlandi (bu testlar `vitest`
+   da o'tardi, lekin `tsc --noEmit` buzoqardi).
+2. `endpoints.backup` qaytaradigan tipda `error` maydoni yo'q edi — backend
+   `BackupOut.error` ni beradi, panel esa ko'rsatolmasdi.
+
+## Qoidalar
+
+- Barcha yangi endpointlar **faqat o'qish** (`GET`) va `StaffUser` guard ostida —
+  panelda ko'rsatish uchun; yozish oqimlari botda qoldi.
+- `channel-posts` outer join bilan: ma'lumot yo'qolishi panelning jim
+  yashirinishi emas (audit tamoyili).
+- Filtrlar URL query orqali — sahifa yangilanmasi server bilan mos.
+
+## Holat
+
+| Ko'rsatkich | Qiymat |
+|---|---|
+| Backend testlar | **362** (+9) |
+| Frontend testlar | **59** (+12) |
+| `ruff check` | toza |
+| `tsc --noEmit` | toza (avval 3 xato) |
+| Panel sahifalari | **15** marshrut (+5) |

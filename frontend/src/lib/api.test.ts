@@ -178,7 +178,7 @@ describe("endpoints", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/v1/auth/login");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ username: "admin", password: "pw" });
+    expect(JSON.parse(String(init.body))).toEqual({ username: "admin", password: "pw" });
   });
 
   it("URL-encodes the status filter", async () => {
@@ -205,7 +205,7 @@ describe("endpoints", () => {
     const [url, init] = fetchFetchCalls(fetchMock);
     expect(url).toBe("/api/v1/topics/A-0001/freeze");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ reason: "spam" });
+    expect(JSON.parse(String(init.body))).toEqual({ reason: "spam" });
   });
 
   it("unfreeze reaches its own endpoint, not /restore", async () => {
@@ -218,7 +218,7 @@ describe("endpoints", () => {
     const [url, init] = fetchFetchCalls(fetchMock);
     expect(url).toBe("/api/v1/topics/A-0001/unfreeze");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ reason: "toza" });
+    expect(JSON.parse(String(init.body))).toEqual({ reason: "toza" });
   });
 
   it("defaults the dashboard window to 30 days", async () => {
@@ -239,7 +239,7 @@ describe("endpoints", () => {
     const [url, init] = fetchFetchCalls(fetchMock);
     expect(url).toBe("/api/v1/settings");
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(init.body)).toEqual({ key: "topic.max_per_user", value: 5 });
+    expect(JSON.parse(String(init.body))).toEqual({ key: "topic.max_per_user", value: 5 });
   });
 });
 

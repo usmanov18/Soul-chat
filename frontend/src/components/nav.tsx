@@ -15,7 +15,12 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/panel", label: "Dashboard", icon: "📊", exact: true },
   { href: "/panel/topics", label: "Suhbatlar", icon: "💬" },
   { href: "/panel/users", label: "Foydalanuvchilar", icon: "👥" },
+  { href: "/panel/media", label: "Media", icon: "🖼️" },
+  { href: "/panel/events", label: "Eventlar", icon: "📅" },
+  { href: "/panel/gallery", label: "Galereya", icon: "🌸" },
+  { href: "/panel/subscriptions", label: "Obunalar", icon: "🔔" },
   { href: "/panel/moderation", label: "Audit log", icon: "🧾" },
+  { href: "/panel/backup", label: "Zaxira", icon: "💾" },
   { href: "/panel/settings", label: "Sozlamalar", icon: "⚙️" },
 ];
 

@@ -92,6 +92,85 @@ export type AuditRow = {
   at: string | null;
 };
 
+export type MediaRow = {
+  id: number;
+  topic_code: string;
+  kind: string;
+  file_id: string;
+  file_size: number;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  mime_type: string | null;
+  caption: string | null;
+  published_to_channel: boolean;
+  nsfw: boolean;
+  nsfw_score: number;
+  created_at: string | null;
+};
+
+export type EventRow = {
+  id: number;
+  topic_code: string;
+  kind: string;
+  title: string;
+  description: string | null;
+  due_at: string | null;
+  remind_at: string | null;
+  location: string | null;
+  checklist: string[] | null;
+  status: string;
+  created_at: string | null;
+};
+
+export type ChannelPostRow = {
+  id: number;
+  topic_code: string | null;
+  kind: string;
+  tg_message_id: number | null;
+  text: string | null;
+  template: string | null;
+  media_file_ids: string[] | null;
+  published_at: string | null;
+  failed_reason: string | null;
+  created_at: string | null;
+};
+
+export type NotificationRow = {
+  id: number;
+  tg_id: number;
+  username: string | null;
+  kind: string;
+  title: string | null;
+  body: string;
+  status: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string | null;
+};
+
+export type SubscriptionRow = {
+  tg_id: number;
+  username: string | null;
+  first_name: string | null;
+  kind: string;
+  chat_id: number;
+  is_member: boolean;
+  status: string;
+  checked_at: string | null;
+};
+
+export type BackupRow = {
+  id: number;
+  target: string;
+  status: string;
+  path: string | null;
+  size: number;
+  checksum: string | null;
+  error: string | null;
+  started_at: string | null;
+};
+
 const TOKEN_KEY = "soulchat.token";
 
 export function getToken(): string | null {
@@ -166,7 +245,35 @@ export const endpoints = {
       method: "PUT",
       body: JSON.stringify({ key, value }),
     }),
-  backup: () => api<{ status: string; path: string | null; size: number }>("/api/v1/backup", { method: "POST" }),
+  backup: () =>
+    api<{ status: string; path: string | null; size: number; error: string | null }>("/api/v1/backup", {
+      method: "POST",
+    }),
+  backupHistory: () => api<BackupRow[]>("/api/v1/backup"),
+  media: (params: { kind?: string; topic_code?: string } = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][]
+    ).toString();
+    return api<{ total: number; items: MediaRow[] }>(`/api/v1/media${query ? `?${query}` : ""}`);
+  },
+  events: (params: { status?: string; topic_code?: string } = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][]
+    ).toString();
+    return api<{ total: number; items: EventRow[] }>(`/api/v1/events${query ? `?${query}` : ""}`);
+  },
+  channelPosts: (kind?: string) =>
+    api<{ total: number; items: ChannelPostRow[] }>(
+      `/api/v1/channel-posts${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`
+    ),
+  notifications: (status?: string) =>
+    api<{ total: number; items: NotificationRow[] }>(
+      `/api/v1/notifications${status ? `?status=${encodeURIComponent(status)}` : ""}`
+    ),
+  subscriptions: (isMember?: boolean) =>
+    api<{ total: number; items: SubscriptionRow[] }>(
+      `/api/v1/subscriptions${isMember === undefined ? "" : `?is_member=${isMember}`}`
+    ),
   search: (query: string) =>
     api<Record<string, unknown[]>>("/api/v1/analytics/search", {
       method: "POST",

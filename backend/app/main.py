@@ -14,7 +14,19 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import analytics, auth, moderation, system, topics, users
+from app.api.v1 import (
+    analytics,
+    auth,
+    channel,
+    events,
+    media,
+    moderation,
+    notifications,
+    subscriptions,
+    system,
+    topics,
+    users,
+)
 from app.api.v1 import settings as settings_router
 from app.core.cache import cache
 from app.core.config import settings
@@ -93,6 +105,11 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=prefix)
     app.include_router(analytics.router, prefix=prefix)
     app.include_router(moderation.router, prefix=prefix)
+    app.include_router(media.router, prefix=prefix)
+    app.include_router(events.router, prefix=prefix)
+    app.include_router(channel.router, prefix=prefix)
+    app.include_router(notifications.router, prefix=prefix)
+    app.include_router(subscriptions.router, prefix=prefix)
     app.include_router(settings_router.router, prefix=prefix)
     app.include_router(system.router, prefix=prefix)
 

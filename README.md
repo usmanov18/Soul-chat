@@ -38,9 +38,11 @@ uzatadi. Tafsilot va MTProto nega rad etilgani:
 - **Xavfsizlik** — rate limit, flood control, captcha, blacklist, warn → ban
 - **AI moderatsiya** — spam, haqorat, toxic, 18+, risk score, summary, emotion
 - **Analitika** — 20+ metrika, kunlik/haftalik/oylik, top users, soatlik faollik
-- **Admin panel** — Next.js + Tailwind + Chart.js, glass UI, dark mode
+- **Admin panel** — Next.js + Tailwind + Chart.js, glass UI, dark mode, 10 sahifa
+  (dashboard, suhbatlar, foydalanuvchilar, media, eventlar, galereya, obunalar,
+  audit log, zaxira, sozlamalar)
 - **Monitoring** — Prometheus `/metrics`, Grafana dashboard, Sentry, audit log
-- **Testlar** — backend 353 (pytest), admin panel 47 (vitest)
+- **Testlar** — backend 362 (pytest), admin panel 59 (vitest)
 
 ## Texnologiyalar
 
@@ -72,7 +74,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 python manage.py initdb && python manage.py seed
 uvicorn app.main:app --reload --port 8000   # /docs
-pytest -q                                   # 353 test
+pytest -q                                   # 362 test
 ```
 
 ## Bot buyruqlari
@@ -104,7 +106,7 @@ backend/
     bot/           aiogram adapteri + middlewares
     api/v1/        REST endpointlari
     tasks.py       celery vazifalari
-  tests/           353 test (Telegram/Redis/Postgres'siz)
+  tests/           362 test (Telegram/Redis/Postgres'siz)
 frontend/          Next.js admin panel
 deploy/            nginx, prometheus, grafana provisioning
 docs/              texnik tahlil, arxitektura, DB, deploy, API
@@ -122,7 +124,7 @@ docs/              texnik tahlil, arxitektura, DB, deploy, API
 ## Testlar
 
 ```
-353 passed
+362 passed
 ```
 
 Testlar haqiqiy servis qatlamini ishga tushiradi: kod generatsiyasi, relay ruxsat
