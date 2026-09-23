@@ -14,7 +14,22 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import analytics, auth, moderation, system, topics, users
+from app.api.middleware import RateLimitMiddleware
+from app.api.v1 import (
+    analytics,
+    auth,
+    channel,
+    events,
+    export,
+    media,
+    moderation,
+    notifications,
+    stats,
+    subscriptions,
+    system,
+    topics,
+    users,
+)
 from app.api.v1 import settings as settings_router
 from app.core.cache import cache
 from app.core.config import settings
@@ -31,6 +46,18 @@ async def lifespan(app: FastAPI):
         await create_all()
     connected = await cache.connect()
     logger.info("cache backend: %s", cache.backend if connected else "memory")
+    if not connected and settings.environment == "production":
+        # Rate limiting, flood counters and captcha state live in this cache.
+        # With the in-memory fallback every worker (and every replica) keeps its
+        # own counters, so `rate_limit_per_minute` silently becomes
+        # limit x workers. Fail loudly rather than let an operator discover it
+        # by measuring a flood that should have been blocked.
+        logger.warning(
+            "Redis is unavailable — falling back to the in-process cache. "
+            "Rate limiting and flood counters are now per worker; run more than "
+            "one worker or replica and the configured limits no longer hold. "
+            "Set REDIS_ENABLED=true and point REDIS_URL at a reachable server."
+        )
     init_sentry()
     app.state.started_at = time.time()
     try:
@@ -55,6 +82,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -81,6 +109,13 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=prefix)
     app.include_router(analytics.router, prefix=prefix)
     app.include_router(moderation.router, prefix=prefix)
+    app.include_router(media.router, prefix=prefix)
+    app.include_router(events.router, prefix=prefix)
+    app.include_router(channel.router, prefix=prefix)
+    app.include_router(notifications.router, prefix=prefix)
+    app.include_router(subscriptions.router, prefix=prefix)
+    app.include_router(export.router, prefix=prefix)
+    app.include_router(stats.router, prefix=prefix)
     app.include_router(settings_router.router, prefix=prefix)
     app.include_router(system.router, prefix=prefix)
 

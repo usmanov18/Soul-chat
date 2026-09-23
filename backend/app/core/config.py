@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production-please-use-32-bytes"
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 60
+    # Allows the derived <username>:<SECRET_KEY> password until a real one is
+    # set with `manage.py setpassword`. Turn off in production.
+    allow_bootstrap_login: bool = True
     refresh_token_ttl_days: int = 30
 
     # ------------------------------------------------------------- database
@@ -82,12 +85,23 @@ class Settings(BaseSettings):
     close_code_length: int = 6
     invite_ttl_hours: int = 48
     max_topics_per_user: int = 3
+    # How many *active* partner slots one account may hold at the same time.
+    max_partner_topics: int = 1
+    # TZ 10 keeps names out of the *topic title*; the public channel is a
+    # separate exposure. Off by default so the anonymity promise holds.
+    channel_show_names: bool = False
+    channel_show_gallery: bool = True
+    # draw the conversation card onto the photo itself (TZ 15). Falls back to
+    # the plain photo whenever the render cannot be produced.
+    channel_gallery_overlay: bool = True
     reactions_enabled: bool = True
     forward_enabled: bool = False
     copy_enabled: bool = False
 
     # ------------------------------------------------------------- security
     rate_limit_per_minute: int = 20
+    # REST API (panel) rate limit, per IP per minute; 0 disables (TZ 30)
+    api_rate_limit_per_minute: int = 240
     rate_limit_burst: int = 5
     flood_threshold: int = 12
     flood_window_seconds: int = 30
@@ -99,6 +113,14 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------- ai
     ai_provider: Literal["builtin", "openai"] = "builtin"
     openai_api_key: str = ""
+    openai_stt_model: str = "whisper-1"
+    # backup targets (TZ 31) — empty disables the adapter
+    s3_bucket: str = ""
+    s3_endpoint_url: str = ""
+    gdrive_access_token: str = ""
+    gdrive_refresh_token: str = ""
+    gdrive_client_id: str = ""
+    gdrive_client_secret: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 
@@ -115,7 +137,17 @@ class Settings(BaseSettings):
 
     # ----------------------------------------------------------- monitoring
     sentry_dsn: str = ""
+    # TZ 20 requires the media itself in the archive, not just a transcript.
+    # Telegram caps bot downloads at 20 MB per file; the budget below caps the
+    # whole bundle so an archive cannot grow without bound.
+    archive_include_media: bool = True
+    archive_media_budget_bytes: int = 50 * 1024 * 1024
+    telegram_max_download_bytes: int = 20 * 1024 * 1024
+    # Telegram answers 429 with a retry_after hint. Honouring it is what keeps
+    # the relay alive under load instead of dropping messages on the floor.
+    telegram_max_retries: int = 3
     metrics_enabled: bool = True
+    metrics_cache_seconds: int = 30
 
     # ------------------------------------------------------------- scheduler
     scheduler_tick_seconds: int = 60

@@ -50,6 +50,7 @@ async def search(payload: SearchRequest, session: SessionDep, user: StaffUser) -
         since=payload.since,
         until=payload.until,
         media_only=payload.media_only,
+        hashtag=payload.hashtag,
         limit=payload.limit,
     )
 

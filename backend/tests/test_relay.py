@@ -115,13 +115,15 @@ async def test_status_blocks_writing(session, owner, gateway, status, expected):
     await session.flush()
     relay = RelayService(session, gateway)
 
-    # the topic is no longer "current", so address it explicitly
     permission = await relay.permission_for(owner.tg_id, topic)
     assert permission.reason is expected
 
+    # The real bot path resolves the topic itself; it must report the *precise*
+    # reason too. A frozen topic used to resolve to NO_TOPIC here, telling the
+    # user "you have no chat, press /new" while their chat was only frozen.
     result = await relay.relay_private(text(owner.tg_id, "salom"))
     assert result.ok is False
-    assert result.reason is DenyReason.NO_TOPIC
+    assert result.reason is expected
 
 
 async def test_photo_is_relayed_and_stored(session, owner, gateway):
@@ -202,3 +204,149 @@ async def test_counters_and_last_active_topic_are_updated(session, owner, gatewa
     assert topic.first_message_at is not None
     assert owner.last_active_topic_id == topic.id
     assert owner.messages_sent == 2
+
+
+# ---------------------------------------------------------------------------
+# idempotency + edit/undo
+# ---------------------------------------------------------------------------
+def _dm(user_id: int, body: str, message_id: int) -> IncomingMessage:
+    return IncomingMessage(
+        user_id=user_id, chat_id=user_id, content_type=MessageContentType.TEXT.value,
+        text=body, tg_message_id=message_id,
+    )
+
+
+async def test_retried_update_is_not_relayed_twice(session, owner, gateway):
+    """Telegram redelivers updates on network errors — the topic must not duplicate."""
+    topic = await make_topic(session, owner)
+    relay = RelayService(session, gateway)
+
+    first = await relay.relay_private(_dm(owner.tg_id, "Salom", 5001))
+    second = await relay.relay_private(_dm(owner.tg_id, "Salom", 5001))
+
+    assert first.ok is True
+    assert second.ok is False
+    assert second.reason is DenyReason.DUPLICATE
+    assert second.reply is None                       # silent: nothing to tell the user
+    assert len(gateway.sent("send_message")) == 1
+    assert topic.message_count == 1
+
+
+async def test_distinct_messages_are_both_relayed(session, owner, gateway):
+    topic = await make_topic(session, owner)
+    relay = RelayService(session, gateway)
+
+    await relay.relay_private(_dm(owner.tg_id, "birinchi", 6001))
+    await relay.relay_private(_dm(owner.tg_id, "ikkinchi", 6002))
+
+    assert len(gateway.sent("send_message")) == 2
+    assert topic.message_count == 2
+
+
+async def test_edit_in_dm_updates_the_topic_copy(session, owner, gateway):
+    topic = await make_topic(session, owner)
+    relay = RelayService(session, gateway)
+    await relay.relay_private(_dm(owner.tg_id, "Salmo", 7001))
+
+    edited = IncomingMessage(
+        user_id=owner.tg_id, chat_id=owner.tg_id, content_type=MessageContentType.TEXT.value,
+        text="Salom", tg_message_id=7001,
+    )
+    result = await relay.relay_edit(edited)
+
+    assert result.ok is True
+    assert len(gateway.sent("edit_message_text")) == 1
+    call = gateway.sent("edit_message_text")[0]
+    assert call.args[0] == topic.chat_id
+    assert "Salom" in call.kwargs["text"]
+    assert "Salmo" not in call.kwargs["text"]
+
+
+async def test_edit_of_unknown_message_is_ignored(session, owner, gateway):
+    await make_topic(session, owner)
+    relay = RelayService(session, gateway)
+    unknown = IncomingMessage(
+        user_id=owner.tg_id, chat_id=owner.tg_id, content_type=MessageContentType.TEXT.value,
+        text="x", tg_message_id=9999,
+    )
+    result = await relay.relay_edit(unknown)
+    assert result.ok is False
+    assert gateway.sent("edit_message_text") == []
+
+
+async def test_undo_deletes_the_topic_copy(session, owner, gateway):
+    from app.core.config import settings
+    from app.services.bot_service import SoulChatBot
+
+    settings.subscription_required = False
+    topic = await make_topic(session, owner)
+    relay = RelayService(session, gateway)
+    await relay.relay_private(_dm(owner.tg_id, "Xato yozdim", 8001))
+
+    bot = SoulChatBot(session, gateway)
+    reply = await bot.undo_last(owner.tg_id)
+
+    assert "o'chirildi" in reply.text.lower()
+    assert (topic.chat_id, 1001) in gateway.deleted_messages or gateway.deleted_messages
+
+
+async def test_undo_without_messages_is_reported(session, owner, gateway):
+    from app.services.bot_service import SoulChatBot
+
+    await make_topic(session, owner)
+    reply = await SoulChatBot(session, gateway).undo_last(owner.tg_id)
+    assert "topilmadi" in reply.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# topic policy switches (forward / reactions)
+# ---------------------------------------------------------------------------
+async def test_forwarded_message_is_refused_when_forwarding_is_off(session, owner, gateway):
+    topic = await make_topic(session, owner)
+    topic.forward_enabled = False
+    await session.flush()
+
+    forwarded = IncomingMessage(
+        user_id=owner.tg_id, chat_id=owner.tg_id, content_type=MessageContentType.TEXT.value,
+        text="Ko'chirilgan", tg_message_id=9101, is_forward=True,
+    )
+    result = await RelayService(session, gateway).relay_private(forwarded)
+
+    assert result.ok is False
+    assert result.reason is DenyReason.FORWARD
+    assert "ko'chirilgan" in (result.reply or "").lower()
+    assert gateway.sent("send_message") == []
+
+
+async def test_forwarded_message_is_allowed_when_forwarding_is_on(session, owner, gateway):
+    topic = await make_topic(session, owner)
+    topic.forward_enabled = True
+    await session.flush()
+
+    forwarded = IncomingMessage(
+        user_id=owner.tg_id, chat_id=owner.tg_id, content_type=MessageContentType.TEXT.value,
+        text="Ko'chirilgan", tg_message_id=9102, is_forward=True,
+    )
+    result = await RelayService(session, gateway).relay_private(forwarded)
+    assert result.ok is True
+    assert len(gateway.sent("send_message")) == 1
+
+
+async def test_reactions_are_stripped_when_disabled(session, owner, gateway):
+    topic = await make_topic(session, owner)
+    topic.reactions_enabled = False
+    await session.flush()
+
+    relay = RelayService(session, gateway)
+    assert await relay.strip_reaction(topic, 1001) is True
+    assert gateway.reactions == [(topic.chat_id, 1001, [])]
+
+
+async def test_reactions_are_left_alone_when_enabled(session, owner, gateway):
+    topic = await make_topic(session, owner)
+    topic.reactions_enabled = True
+    await session.flush()
+
+    relay = RelayService(session, gateway)
+    assert await relay.strip_reaction(topic, 1001) is False
+    assert gateway.reactions == []

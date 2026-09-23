@@ -156,6 +156,64 @@ class SecurityService:
         await self.audit.log(AuditAction.USER_BAN, actor=actor, message=f"ban {tg_id}: {reason}")
         return user
 
+    async def unban(self, tg_id: int, actor: User | None = None, reason: str = "") -> User | None:
+        """Lift a ban (TZ 22: moderator powers). Ban itself adds a blacklist row;
+        unbanning clears the flag and records the reversal in the audit log so a
+        panel operator can see who lifted it."""
+        user = (await self.session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+        if user is None:
+            return None
+        user.is_banned = False
+        user.ban_reason = ""
+        await self.audit.log(
+            AuditAction.USER_UNBAN, actor=actor, message=f"unban {tg_id}: {reason}", source="api"
+        )
+        return user
+
+    async def unmute(self, tg_id: int, actor: User | None = None, reason: str = "") -> User | None:
+        user = (await self.session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+        if user is None:
+            return None
+        user.is_muted = False
+        user.mute_until = None
+        await self.audit.log(
+            AuditAction.USER_UNMUTE, actor=actor, message=f"unmute {tg_id}: {reason}", source="api"
+        )
+        return user
+
+    # fake-account heuristics (TZ 27). Telegram's Bot API exposes no account
+    # age, so the score is built from what we *can* see: profile shape plus the
+    # user's own spam history.
+    USERNAME_NOISE = re.compile(r"^(?:[a-z]{0,4}\d{3,}|\d{4,}[a-z]{0,3})$", re.IGNORECASE)
+
+    def fake_account_signals(self, user: User) -> list[str]:
+        signals: list[str] = []
+        if not user.username:
+            signals.append("no_username")
+        elif self.USERNAME_NOISE.match(user.username or ""):
+            signals.append("machine_username")
+        if not (user.first_name or "").strip():
+            signals.append("no_name")
+        return signals
+
+    async def fake_account_score(self, user: User) -> tuple[int, list[str]]:
+        """0..100 plus the reasons; >=50 means treat as suspicious."""
+        from sqlalchemy import func, select
+
+        from app.models.security import SpamEvent
+
+        signals = self.fake_account_signals(user)
+        score = 15 * len(signals)
+        week_ago = utcnow() - timedelta(days=7)
+        spam_hits = await self.session.scalar(
+            select(func.count())
+            .select_from(SpamEvent)
+            .where(SpamEvent.user_id == user.id, SpamEvent.created_at >= week_ago)
+        )
+        score += 10 * int(spam_hits or 0)
+        score += 5 * int(user.warns or 0)
+        return min(score, 100), signals
+
     async def warn(self, tg_id: int, actor: User | None, reason: str, topic: Topic | None = None) -> tuple[User | None, int]:
         from app.models.user import Warn
 

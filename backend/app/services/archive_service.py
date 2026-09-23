@@ -12,24 +12,40 @@ import io
 import json
 import os
 import zipfile
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import metrics
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.enums import AuditAction
-from app.models.message import Message
+from app.models.message import Media, Message
 from app.models.security import Archive
 from app.models.topic import Topic
 from app.models.user import User
 from app.services.audit import AuditService
 from app.services.pdf_writer import build_transcript_pdf
+from app.services.telegram_gateway import TelegramGateway
 
 logger = get_logger(__name__)
+
+
+# file extension per media kind, used when Telegram gives us no file name
+_EXTENSION_BY_KIND: dict[str, str] = {
+    "photo": ".jpg",
+    "video": ".mp4",
+    "voice": ".ogg",
+    "audio": ".mp3",
+    "document": ".bin",
+    "animation": ".mp4",
+    "video_note": ".mp4",
+    "sticker": ".webp",
+}
 
 
 @dataclass
@@ -41,12 +57,27 @@ class ArchiveResult:
     formats: list[str]
     message_count: int
     media_count: int
+    # how many media files actually made it into the zip, and why the rest did not
+    media_bundled: int = 0
+    media_skipped: int = 0
+    skipped_reasons: list[str] = field(default_factory=list)
 
 
 class ArchiveService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        gateway: TelegramGateway | None = None,
+        transcriber: Callable[[bytes], Awaitable[str | None]] | None = None,
+    ) -> None:
         self.session = session
         self.audit = AuditService(session)
+        # without a transport the transcript is still produced, only the media
+        # bundle is skipped — the archive must never fail outright
+        self.gateway = gateway
+        # D2: optional voice->text hook (Whisper in production). Best-effort:
+        # a failing transcriber degrades to the plain "voice" label.
+        self.transcriber = transcriber
 
     # ------------------------------------------------------------------
     async def export(self, topic: Topic, requested_by: User | None = None,
@@ -55,13 +86,17 @@ class ArchiveService:
         rows, senders = await self._load(topic)
 
         os.makedirs(settings.archive_dir, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        # Microseconds: two archives of the same topic in one second used to
+        # collide on the same zip name and overwrite each other.
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
         slug = topic.code.replace("-", "").lower()
         base = f"soulchat-{slug}-{stamp}"
         zip_path = os.path.join(settings.archive_dir, f"{base}.zip")
 
+        voice_texts = await self._voice_texts(rows)
+
         payloads: dict[str, bytes] = {
-            "json": self._json(topic, rows, senders).encode("utf-8"),
+            "json": self._json(topic, rows, senders, voice_texts).encode("utf-8"),
             "txt": self._txt(topic, rows, senders).encode("utf-8"),
             "html": self._html(topic, rows, senders).encode("utf-8"),
             "pdf": build_transcript_pdf(
@@ -69,11 +104,19 @@ class ArchiveService:
             ),
         }
 
+        # TZ 20 asks for the media itself, not just a transcript that says
+        # "photo". Everything is downloaded first so the zip is written once.
+        bundled, skipped, reasons = await self._bundle_media(topic, rows)
+
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
             for fmt in formats:
                 if fmt in payloads:
                     archive.writestr(f"{base}.{fmt}", payloads[fmt])
             archive.writestr("README.txt", self._readme(topic).encode("utf-8"))
+            for name, blob in bundled:
+                # ZIP_STORED for already-compressed media would only waste CPU;
+                # deflate is harmless either way and keeps text transcripts small
+                archive.writestr(f"media/{name}", blob)
 
         size = os.path.getsize(zip_path)
         checksum = _sha256(zip_path)
@@ -105,7 +148,97 @@ class ArchiveService:
             formats=formats,
             message_count=len(rows),
             media_count=media_count,
+            media_bundled=len(bundled),
+            media_skipped=skipped,
+            skipped_reasons=reasons,
         )
+
+    async def _bundle_media(
+        self, topic: Topic, rows: list[Message]
+    ) -> tuple[list[tuple[str, bytes]], int, list[str]]:
+        """Download every media file of the topic, within a byte budget.
+
+        Returns ``(entries, skipped_count, reasons)`` where each entry is
+        ``(zip_path, bytes)``. Nothing here raises: a file Telegram will not
+        hand over is recorded and the archive still gets written, because an
+        incomplete archive is far better than none at all 96 hours before the
+        topic is deleted.
+        """
+        entries: list[tuple[str, bytes]] = []
+        if not settings.archive_include_media or self.gateway is None:
+            return entries, 0, []
+
+        message_ids = [row.id for row in rows]
+        if not message_ids:
+            return entries, 0, []
+
+        media_rows = (
+            await self.session.execute(
+                select(Media)
+                .where(Media.topic_id == topic.id, Media.message_id.in_(message_ids))
+                .order_by(Media.id)
+            )
+        ).scalars().all()
+
+        budget = settings.archive_media_budget_bytes
+        cap = settings.telegram_max_download_bytes
+        used = 0
+        skipped = 0
+        reasons: list[str] = []
+        for index, item in enumerate(media_rows, start=1):
+            # Telegram refuses to serve anything over 20 MB to a bot; the
+            # recorded size lets us skip it without a wasted round trip, but it
+            # is not trusted as the only signal (see the post-download check).
+            if item.file_size > cap:
+                skipped += 1
+                reasons.append(f"{item.kind} {item.file_id}: {item.file_size} bayt > {cap} bayt chegara")
+                continue
+
+            blob = await self.gateway.get_file(item.file_id)
+            if blob is None:
+                skipped += 1
+                reasons.append(f"{item.kind} {item.file_id}: yuklab olib bo'lmadi")
+                continue
+
+            # Budget against the *actual* size. media.file_size is often 0 —
+            # nothing forces a caller to record it — so checking it alone made
+            # the limit a no-op.
+            if used + len(blob) > budget:
+                skipped += 1
+                reasons.append(
+                    f"{item.kind} {item.file_id}: arxiv hajmi chegarasi "
+                    f"({budget} bayt, {len(blob)} bayt kerak edi)"
+                )
+                continue
+            if len(blob) > cap:
+                skipped += 1
+                reasons.append(f"{item.kind} {item.file_id}: {len(blob)} bayt > {cap} bayt chegara")
+                continue
+
+            used += len(blob)
+            entries.append((self._media_name(item, index), blob))
+
+        if entries:
+            metrics.incr(
+                "soulchat_archive_media_bytes_total",
+                amount=sum(len(blob) for _, blob in entries),
+            )
+        if skipped:
+            metrics.incr("soulchat_archive_media_skipped_total", amount=float(skipped))
+            logger.warning(
+                "archive %s: %s media bundled, %s skipped (%s)",
+                topic.code, len(entries), skipped, "; ".join(reasons[:5]),
+            )
+        return entries, skipped, reasons
+
+    @staticmethod
+    def _media_name(item: Media, index: int) -> str:
+        """``003_photo_AgADBA.jpg`` — ordered, kinded, and collision free."""
+        extension = _EXTENSION_BY_KIND.get(item.kind, "")
+        if not extension and item.mime_type:
+            extension = "." + item.mime_type.split("/")[-1].split("+")[0]
+        stem = "".join(c if c.isalnum() else "_" for c in item.file_id)[:24]
+        return f"{index:03d}_{item.kind}_{stem}{extension}"
 
     def read(self, result: ArchiveResult) -> bytes:
         with open(result.path, "rb") as handle:
@@ -126,7 +259,52 @@ class ArchiveService:
         return rows, senders
 
     # ---------------------------------------------------------- renderers
-    def _json(self, topic: Topic, rows: list[Message], senders: dict[int, str]) -> str:
+    async def _voice_texts(self, rows: list[Message]) -> dict[int, str]:
+        """D2: transcribe voice messages when a transcriber is wired in.
+
+        The file id lives on the related ``Media`` row (``Message.file_id`` is
+        only populated for direct sends), so voices are resolved through it.
+        """
+        if self.transcriber is None or self.gateway is None:
+            return {}
+        voice_by_message = {
+            row.message_id: row.file_id
+            for row in (
+                await self.session.execute(
+                    select(Media).where(
+                        Media.message_id.in_([r.id for r in rows]),
+                        Media.kind == "voice",
+                    )
+                )
+            ).scalars().all()
+        }
+        texts: dict[int, str] = {}
+        for row in rows:
+            file_id = voice_by_message.get(row.id)
+            if not file_id:
+                continue
+            try:
+                audio = await self.gateway.get_file(file_id)
+            except Exception:  # noqa: BLE001
+                continue
+            if not audio:
+                continue
+            try:
+                text = await self.transcriber(audio)
+            except Exception:  # noqa: BLE001
+                text = None
+            if text:
+                texts[row.id] = text
+        return texts
+
+    def _json(
+        self,
+        topic: Topic,
+        rows: list[Message],
+        senders: dict[int, str],
+        voice_texts: dict[int, str] | None = None,
+    ) -> str:
+        voice_texts = voice_texts or {}
         payload = {
             "topic": {
                 "code": topic.code,
@@ -153,6 +331,7 @@ class ArchiveService:
                     "type": row.content_type,
                     "text": row.text,
                     "caption": row.caption,
+                    "voice_text": voice_texts.get(row.id),
                     "file_id": row.file_id,
                     "media": [
                         {

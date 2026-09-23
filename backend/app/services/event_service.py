@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,8 @@ from app.models.message import ChannelPost, Event
 from app.models.topic import Topic
 from app.models.user import User
 from app.services.audit import AuditService
+from app.services.image_card import render_overlay
+from app.services.settings_service import SettingsService
 from app.services.telegram_gateway import TelegramGateway
 
 logger = get_logger(__name__)
@@ -132,16 +135,28 @@ class ChannelService:
         self.session = session
         self.gateway = gateway
         self.audit = AuditService(session)
+        self.settings = SettingsService(session)
+
+    async def _flag(self, key: str, env_value: bool) -> bool:
+        """Operator switch: the admin panel wins, the environment is the default."""
+        return await self.settings.get_bool(key, env_value)
 
     # ------------------------------------------------------------ new topic
     async def announce_topic(self, topic: Topic, owner: User, partner: User | None = None) -> int | None:
         when = utcnow()
+        if await self._flag("channel.show_names", settings.channel_show_names):
+            people = (
+                f"👤 {self._escape(owner.full_name)}\n"
+                + (f"👤 {self._escape(partner.full_name)}\n" if partner else "")
+            )
+        else:
+            # anonymity first: the code is the only identifier that leaves the bot
+            people = "👤 Egasi\n" + ("👤 Sherigi\n" if partner else "")
         text = (
             "✨\n\n"
             "<b>Yangi suhbat boshlandi</b>\n\n"
             f"🔖 <code>{topic.code}</code>\n"
-            f"👤 {self._escape(owner.full_name)}\n"
-            + (f"👤 {self._escape(partner.full_name)}\n" if partner else "")
+            + people
             + f"🕒 {when.strftime('%d.%m %H:%M')}"
         )
         message_id = await self._post(text, topic, ChannelPostType.NEW_TOPIC, template="new_topic")
@@ -153,25 +168,74 @@ class ChannelService:
     async def publish_gallery(
         self, topic: Topic, owner: User, partner: User | None, file_id: str, card: GalleryCard
     ) -> int | None:
-        caption = self.render_gallery_caption(card)
+        if not await self._flag("channel.show_gallery", settings.channel_show_gallery):
+            return None
+        show_names = await self._flag("channel.show_names", settings.channel_show_names)
+        caption = self.render_gallery_caption(card, show_names=show_names)
+        photo: Any = await self._overlay(file_id, card)
         message_id: int | None = None
         try:
             message_id = await self.gateway.send_photo(
-                self._channel_id(), file_id, caption, parse_mode="HTML"
+                self._channel_id(), photo, caption, parse_mode="HTML"
             )
         except Exception as exc:  # pragma: no cover - transport failure
             logger.warning("gallery post failed: %s", exc)
             await self._record(topic, ChannelPostType.GALLERY, caption, None, str(exc))
             return None
 
-        await self._record(topic, ChannelPostType.GALLERY, caption, message_id, None, [file_id])
+        # once re-encoded there is no file_id to point at any more
+        stored = [file_id] if photo is file_id else []
+        await self._record(topic, ChannelPostType.GALLERY, caption, message_id, None, stored)
         return message_id
 
-    def render_gallery_caption(self, card: GalleryCard) -> str:
-        """🌸 / A-041 / Akbar ❤️ Salima / 📍Toshkent / 🕒 19:00"""
-        names = self._escape(card.owner_name)
-        if card.partner_name:
-            names = f"{names} ❤️ {self._escape(card.partner_name)}"
+    async def _overlay(self, file_id: str, card: GalleryCard) -> Any:
+        """Draw the card onto the photo (TZ 15), or hand back the ``file_id``.
+
+        Every branch here degrades to the original photo: no overlay setting, no
+        Pillow, download over the 20 MB bot cap, an unreadable image, a thumbnail
+        too small for the card. The channel post is decoration and must never be
+        the reason a user's photo does not appear.
+        """
+        if not await self._flag("channel.gallery_overlay", settings.channel_gallery_overlay):
+            return file_id
+        try:
+            payload = await self.gateway.get_file(file_id)
+        except Exception as exc:  # pragma: no cover - transport failure
+            logger.warning("gallery overlay: download failed: %s", exc)
+            return file_id
+        if not payload:
+            return file_id
+        names = None
+        if await self._flag("channel.show_names", settings.channel_show_names):
+            names = card.owner_name
+            if card.partner_name:
+                names = f"{names} + {card.partner_name}"
+        rendered = render_overlay(
+            payload,
+            code=card.topic_code,
+            caption=card.caption,
+            location=card.location,
+            when=card.when.strftime("%d.%m  %H:%M") if card.when else None,
+            names=names,
+        )
+        if rendered is None:
+            return file_id
+        # raw bytes: the gateway hands kwargs straight to aiogram, which wraps
+        # bytes into a buffered upload itself.
+        return rendered
+
+    def render_gallery_caption(self, card: GalleryCard, show_names: bool = False) -> str:
+        """🌸 / A-041 / Akbar ❤️ Salima / 📍Toshkent / 🕒 19:00
+
+        ``show_names`` defaults to False: the card is published to a *public*
+        channel, and TZ 10 promises that names stay out of the open.
+        """
+        if show_names:
+            names = self._escape(card.owner_name)
+            if card.partner_name:
+                names = f"{names} ❤️ {self._escape(card.partner_name)}"
+        else:
+            names = "❤️" if card.partner_name else "👤"
         when = card.when.strftime("%H:%M") if card.when else ""
         day = card.when.strftime("%d.%m") if card.when else ""
         lines = [

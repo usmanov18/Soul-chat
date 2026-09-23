@@ -52,6 +52,19 @@ Xizmatlar:
 | `nginx` | reverse proxy (`/api` → backend, `/` → panel) |
 | `prometheus` / `grafana` | monitoring (`:9090` / `:3001`) |
 
+## 3.1 Ixtiyoriy integratsiyalar (`.env`)
+
+| O'zgaruvchi | Vazifa |
+|---|---|
+| `API_RATE_LIMIT_PER_MINUTE` | REST API IP-limit (default 240; `0` = o'chirish) |
+| `OPENAI_API_KEY` | AI moderatsiya provider, `/summary`-`/suggest` xulosasi, **ovoz transkripsiyasi** (`OPENAI_STT_MODEL`, default `whisper-1`) va NSFW vision |
+| `S3_BUCKET`, `S3_ENDPOINT_URL` + `pip install -r requirements-backup.txt` | zaxiralarni S3-ga (boto3) |
+| `GDRIVE_ACCESS_TOKEN` yoki `GDRIVE_REFRESH_TOKEN`+`GDRIVE_CLIENT_ID`+`GDRIVE_CLIENT_SECRET` | zaxiralarni Google Drive-ga (httpx multipart) |
+
+Backup target sozlanmasa — zaxira har kuni lokal `backup_dir`ga yoziladi;
+S3/Drive xatosi `backup_history`ga `status=failed` qilib yoziladi, beat
+to'xtamaydi.
+
 ## 4. Birinchi super admin
 
 Botga `/start` bosgan foydalanuvchini super admin qilish:

@@ -50,6 +50,7 @@ export function Panel({
 
 export function StatusChip({ status }: { status: string }) {
   const tones: Record<string, string> = {
+    draft: "border-violet-400/30 bg-violet-400/10 text-violet-200",
     active: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
     frozen: "border-sky-400/30 bg-sky-400/10 text-sky-200",
     blocked: "border-amber-400/30 bg-amber-400/10 text-amber-200",
@@ -57,7 +58,7 @@ export function StatusChip({ status }: { status: string }) {
     archived: "border-slate-400/30 bg-slate-400/10 text-slate-200",
     deleted: "border-rose-400/30 bg-rose-400/10 text-rose-200",
   };
-  return <span className={`chip ${tones[status] ?? ""}`}>{status.replace("_", " ")}</span>;
+  return <span className={`chip ${tones[status] ?? ""}`}>{status.replaceAll("_", " ")}</span>;
 }
 
 export function EmptyState({ message }: { message: string }) {

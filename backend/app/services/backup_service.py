@@ -76,7 +76,9 @@ class BackupService:
     # ------------------------------------------------------------------
     async def _dump(self) -> str:
         os.makedirs(settings.backup_dir, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        # Microseconds matter: two backups in the same second used to produce
+        # the same file name and the second silently overwrote the first.
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
         if settings.is_sqlite:
             source = settings.database_url.split("///")[-1]
             destination = os.path.join(settings.backup_dir, f"soulchat-{stamp}.sqlite3")

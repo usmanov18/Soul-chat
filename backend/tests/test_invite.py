@@ -105,3 +105,104 @@ async def test_partner_can_leave_and_slot_frees_up(session, owner, partner, outs
     second = await service.create(topic, owner)
     await service.accept(second.invite.token, outsider)
     assert topic.partner_id == outsider.id
+
+
+# ---------------------------------------------------------------------------
+# concurrency + partner slot limit
+# ---------------------------------------------------------------------------
+async def test_concurrent_claims_leave_exactly_one_partner(session, owner, partner, outsider, gateway):
+    """Two people open the same link at the same instant — only one may win."""
+    import asyncio
+
+    topic = await make_topic(session, owner)
+    service = InviteService(session)
+    created = await service.create(topic, owner)
+
+    async def claim(user):
+        try:
+            await service.accept(created.invite.token, user)
+            return "ok"
+        except InviteError as exc:
+            return f"err:{exc}"
+
+    results = await asyncio.gather(claim(partner), claim(outsider))
+
+    assert results.count("ok") == 1
+    assert topic.partner_id in {partner.id, outsider.id}
+    assert created.invite.uses == 1
+
+
+async def test_user_cannot_hold_two_partner_slots(session, owner, partner, gateway, monkeypatch):
+    from app.core.config import settings
+    from app.models.user import User
+
+    monkeypatch.setattr(settings, "max_partner_topics", 1)
+
+    second_owner = User(tg_id=555, username="ikkinchi", first_name="Ikkinchi", gender="male")
+    session.add(second_owner)
+    await session.flush()
+
+    first_topic = await make_topic(session, owner, code="A-0001")
+    second_topic = await make_topic(session, second_owner, code="A-0002")
+
+    service = InviteService(session)
+    first_invite = await service.create(first_topic, owner)
+    await service.accept(first_invite.invite.token, partner)
+
+    second_invite = await service.create(second_topic, second_owner)
+    with pytest.raises(InviteError):
+        await service.accept(second_invite.invite.token, partner)
+
+
+async def test_partner_slot_limit_is_configurable(session, owner, partner, gateway, monkeypatch):
+    from app.core.config import settings
+    from app.models.user import User
+
+    monkeypatch.setattr(settings, "max_partner_topics", 2)
+
+    second_owner = User(tg_id=556, username="uchinchi", first_name="Uchinchi", gender="male")
+    session.add(second_owner)
+    await session.flush()
+
+    first_topic = await make_topic(session, owner, code="A-0003")
+    second_topic = await make_topic(session, second_owner, code="A-0004")
+
+    service = InviteService(session)
+    await service.accept((await service.create(first_topic, owner)).invite.token, partner)
+    await service.accept((await service.create(second_topic, second_owner)).invite.token, partner)
+
+    assert first_topic.partner_id == partner.id
+    assert second_topic.partner_id == partner.id
+
+
+async def test_leaving_frees_the_slot(session, owner, partner, gateway, monkeypatch):
+    from app.core.config import settings
+    from app.models.user import User
+
+    monkeypatch.setattr(settings, "max_partner_topics", 1)
+    second_owner = User(tg_id=557, username="tortinchi", first_name="Tortinchi", gender="male")
+    session.add(second_owner)
+    await session.flush()
+
+    first_topic = await make_topic(session, owner, code="A-0005")
+    second_topic = await make_topic(session, second_owner, code="A-0006")
+
+    service = InviteService(session)
+    await service.accept((await service.create(first_topic, owner)).invite.token, partner)
+    await service.leave(first_topic, partner)
+
+    await service.accept((await service.create(second_topic, second_owner)).invite.token, partner)
+    assert second_topic.partner_id == partner.id
+
+
+async def test_invite_into_a_closed_topic_is_refused(session, owner, partner, gateway):
+    from app.enums import TopicStatus
+
+    topic = await make_topic(session, owner)
+    service = InviteService(session)
+    created = await service.create(topic, owner)
+    topic.status = TopicStatus.ARCHIVED.value
+    await session.flush()
+
+    with pytest.raises(InviteError):
+        await service.accept(created.invite.token, partner)

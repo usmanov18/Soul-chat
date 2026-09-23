@@ -1,0 +1,3 @@
+# Optional backup target adapters (TZ 31). Install with:
+#   pip install -r requirements-backup.txt
+boto3>=1.34

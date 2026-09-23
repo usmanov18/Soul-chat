@@ -7,10 +7,13 @@ only then gets write access.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -22,6 +25,7 @@ from app.enums import (
     NotificationKind,
     ParticipantRole,
     ParticipantStatus,
+    TopicStatus,
 )
 from app.models.topic import Invite, Topic, TopicParticipant
 from app.models.user import User
@@ -31,6 +35,21 @@ from app.services.notification import NotificationService
 
 class InviteError(Exception):
     pass
+
+
+# Serialises concurrent claims of the same invite inside one process. The DB
+# row lock covers multi-process deployments (PostgreSQL); this covers SQLite
+# and the single-worker case without needing a second round trip.
+_invite_locks: dict[str, asyncio.Lock] = {}
+
+
+@asynccontextmanager
+async def _slot_guard(token: str) -> AsyncIterator[None]:
+    lock = _invite_locks.setdefault(token, asyncio.Lock())
+    async with lock:
+        yield
+    if not lock.locked():
+        _invite_locks.pop(token, None)
 
 
 @dataclass
@@ -73,28 +92,50 @@ class InviteService:
 
     # ------------------------------------------------------------------
     async def accept(self, token: str, user: User) -> Topic:
-        invite = (
-            await self.session.execute(select(Invite).where(Invite.token == token))
-        ).scalar_one_or_none()
-        if invite is None:
-            raise InviteError("Taklif topilmadi.")
-        if invite.status != InviteStatus.PENDING.value:
-            raise InviteError("Bu taklif allaqachon ishlatilgan yoki bekor qilingan.")
-        if not is_future(invite.expires_at):
-            invite.status = InviteStatus.EXPIRED.value
-            raise InviteError("Taklif muddati tugagan.")
+        """Claim the partner slot.
 
-        topic = await self.session.get(Topic, invite.topic_id)
-        if topic is None:
-            raise InviteError("Suhbat topilmadi.")
-        if topic.owner_id == user.id:
-            raise InviteError("Siz bu suhbatning egasisiz — sherik bo'la olmaysiz.")
-        if topic.partner_id:
-            raise InviteError("Bu suhbatta sherik o'rni band.")
+        Both the invite row and the topic row are locked, so two people opening
+        the same link at the same instant cannot both win the single slot.
+        On SQLite ``FOR UPDATE`` is a no-op; the process-wide asyncio lock in
+        :meth:`_slot_guard` keeps the check-then-set atomic there too.
+        """
+        async with _slot_guard(token):
+            invite_stmt = select(Invite).where(Invite.token == token)
+            topic_stmt_holder: dict[str, Topic | None] = {}
+            if not settings.is_sqlite:  # pragma: no cover - PostgreSQL path
+                invite_stmt = invite_stmt.with_for_update()
+            invite = (await self.session.execute(invite_stmt)).scalar_one_or_none()
+            if invite is None:
+                raise InviteError("Taklif topilmadi.")
+            if invite.status != InviteStatus.PENDING.value:
+                raise InviteError("Bu taklif allaqachon ishlatilgan yoki bekor qilingan.")
+            if not is_future(invite.expires_at):
+                invite.status = InviteStatus.EXPIRED.value
+                raise InviteError("Taklif muddati tugagan.")
 
-        # one partner per user, per TZ: only a single partner slot exists
-        topic.partner_id = user.id
-        topic.partner_tg_id = user.tg_id
+            locked_stmt = select(Topic).where(Topic.id == invite.topic_id)
+            if not settings.is_sqlite:  # pragma: no cover - PostgreSQL path
+                locked_stmt = locked_stmt.with_for_update()
+            topic = (await self.session.execute(locked_stmt)).scalar_one_or_none()
+            topic_stmt_holder["topic"] = topic
+            if topic is None:
+                raise InviteError("Suhbat topilmadi.")
+            if topic.owner_id == user.id:
+                raise InviteError("Siz bu suhbatning egasisiz — sherik bo'la olmaysiz.")
+            if topic.partner_id:
+                raise InviteError("Bu suhbatta sherik o'rni band.")
+            if topic.status not in self._OPEN_STATES:
+                raise InviteError("Bu suhbat faol emas.")
+
+            held = await self._active_partner_slots(user.id, exclude_topic=topic.id)
+            if held >= settings.max_partner_topics:
+                raise InviteError(
+                    f"Siz allaqachon {held} ta suhbatda sheriksiniz "
+                    f"(limit {settings.max_partner_topics})."
+                )
+
+            topic.partner_id = user.id
+            topic.partner_tg_id = user.tg_id
         invite.status = InviteStatus.ACCEPTED.value
         invite.uses += 1
         invite.accepted_by = user.id
@@ -130,6 +171,25 @@ class InviteService:
         await self.audit.log(AuditAction.PARTNER_ACCEPT, actor=user, topic=topic, message="invite accepted")
         await self.session.flush()
         return topic
+
+    _OPEN_STATES: tuple[str, ...] = (
+        TopicStatus.ACTIVE.value,
+        TopicStatus.FROZEN.value,
+        TopicStatus.DELETE_PENDING.value,
+    )
+
+    async def _active_partner_slots(self, user_id: int, exclude_topic: int) -> int:
+        """How many live topics this user already occupies a partner slot in."""
+        stmt = (
+            select(func.count())
+            .select_from(Topic)
+            .where(
+                Topic.partner_id == user_id,
+                Topic.id != exclude_topic,
+                Topic.status.in_(self._OPEN_STATES),
+            )
+        )
+        return int((await self.session.execute(stmt)).scalar_one() or 0)
 
     # ------------------------------------------------------------------
     async def revoke(self, invite: Invite, actor: User) -> None:

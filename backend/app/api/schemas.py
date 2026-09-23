@@ -97,6 +97,7 @@ class DashboardOut(BaseModel):
 
 
 class SearchRequest(BaseModel):
+    hashtag: str | None = None
     query: str = ""
     code: str | None = None
     username: str | None = None
@@ -108,8 +109,13 @@ class SearchRequest(BaseModel):
 
 
 # --------------------------------------------------------------- moderation
+class AppealDecision(BaseModel):
+    decision: str  # approve | reject
+    note: str | None = None
+
+
 class ModerationRequest(BaseModel):
-    action: str  # warn | mute | ban | freeze | restore
+    action: str  # warn | mute | ban | freeze | unfreeze | restore
     tg_id: int
     reason: str = ""
     topic_code: str | None = None
@@ -136,6 +142,10 @@ class SettingsOut(BaseModel):
 
 
 # ------------------------------------------------------------------- backup
+class BackupVerifyIn(BaseModel):
+    id: int
+
+
 class BackupOut(BaseModel):
     status: str
     path: str | None = None

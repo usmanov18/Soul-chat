@@ -64,6 +64,22 @@ export type UserRow = {
   created_at: string;
 };
 
+/**
+ * Operator-facing metadata for a setting, from `SETTINGS_META` on the backend.
+ *
+ * `enforcement` is the part that matters: it says whether the platform can
+ * actually guarantee the toggle. `advisory` means the value is stored and shown
+ * but *not* enforceable — `topic.copy_enabled` is the standing example, because
+ * a silently copied message is indistinguishable from a typed one.
+ */
+export type Enforcement = "enforced" | "reactive" | "advisory";
+
+export type SettingMeta = {
+  label: string;
+  enforcement: Enforcement;
+  note: string;
+};
+
 export type AuditRow = {
   id: number;
   action: string;
@@ -74,6 +90,95 @@ export type AuditRow = {
   source: string;
   message: string | null;
   at: string | null;
+};
+
+export type MediaRow = {
+  id: number;
+  topic_code: string;
+  kind: string;
+  file_id: string;
+  file_size: number;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  mime_type: string | null;
+  caption: string | null;
+  published_to_channel: boolean;
+  nsfw: boolean;
+  nsfw_score: number;
+  created_at: string | null;
+};
+
+export type EventRow = {
+  id: number;
+  topic_code: string;
+  kind: string;
+  title: string;
+  description: string | null;
+  due_at: string | null;
+  remind_at: string | null;
+  location: string | null;
+  checklist: string[] | null;
+  status: string;
+  created_at: string | null;
+};
+
+export type ChannelPostRow = {
+  id: number;
+  topic_code: string | null;
+  kind: string;
+  tg_message_id: number | null;
+  text: string | null;
+  template: string | null;
+  media_file_ids: string[] | null;
+  published_at: string | null;
+  failed_reason: string | null;
+  created_at: string | null;
+};
+
+export type NotificationRow = {
+  id: number;
+  tg_id: number;
+  username: string | null;
+  kind: string;
+  title: string | null;
+  body: string;
+  status: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string | null;
+};
+
+export type SubscriptionRow = {
+  tg_id: number;
+  username: string | null;
+  first_name: string | null;
+  kind: string;
+  chat_id: number;
+  is_member: boolean;
+  status: string;
+  checked_at: string | null;
+};
+
+export type AppealRow = {
+  id: number;
+  tg_id: number;
+  text: string;
+  status: string;
+  decided_at: string | null;
+  decision_note: string | null;
+  created_at: string | null;
+};
+
+export type BackupRow = {
+  id: number;
+  target: string;
+  status: string;
+  path: string | null;
+  size: number;
+  checksum: string | null;
+  error: string | null;
+  started_at: string | null;
 };
 
 const TOKEN_KEY = "soulchat.token";
@@ -107,12 +212,19 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const response = await fetch(path, { ...init, headers, cache: "no-store" });
   if (!response.ok) {
-    let detail = response.statusText;
+    // Prefer FastAPI's `detail`; fall back to the HTTP reason phrase. Dumping a
+    // raw `{}` into the UI (what `detail ?? JSON.stringify(body)` produced when
+    // the body was an empty object) tells the operator nothing.
+    let detail = response.statusText || `HTTP ${response.status}`;
     try {
-      const body = await response.json();
-      detail = body.detail ?? JSON.stringify(body);
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body?.detail === "string" && body.detail) {
+        detail = body.detail;
+      } else if (body && typeof body === "object" && Object.keys(body).length > 0) {
+        detail = JSON.stringify(body);
+      }
     } catch {
-      /* non json error body */
+      /* non json error body — keep the reason phrase */
     }
     throw new ApiError(response.status, detail);
   }
@@ -136,13 +248,62 @@ export const endpoints = {
     }),
   users: () => api<UserRow[]>("/api/v1/users?limit=200"),
   audit: () => api<AuditRow[]>("/api/v1/moderation/audit?limit=100"),
-  settings: () => api<{ items: Record<string, unknown> }>("/api/v1/settings"),
+  settings: () =>
+    api<{ items: Record<string, unknown>; meta?: Record<string, SettingMeta> }>("/api/v1/settings"),
   updateSetting: (key: string, value: unknown) =>
     api<{ key: string; value: unknown }>("/api/v1/settings", {
       method: "PUT",
       body: JSON.stringify({ key, value }),
     }),
-  backup: () => api<{ status: string; path: string | null; size: number }>("/api/v1/backup", { method: "POST" }),
+  backup: () =>
+    api<{ status: string; path: string | null; size: number; error: string | null }>("/api/v1/backup", {
+      method: "POST",
+    }),
+  backupHistory: () => api<BackupRow[]>("/api/v1/backup"),
+  media: (params: { kind?: string; topic_code?: string } = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][]
+    ).toString();
+    return api<{ total: number; items: MediaRow[] }>(`/api/v1/media${query ? `?${query}` : ""}`);
+  },
+  events: (params: { status?: string; topic_code?: string } = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][]
+    ).toString();
+    return api<{ total: number; items: EventRow[] }>(`/api/v1/events${query ? `?${query}` : ""}`);
+  },
+  channelPosts: (kind?: string) =>
+    api<{ total: number; items: ChannelPostRow[] }>(
+      `/api/v1/channel-posts${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`
+    ),
+  notifications: (status?: string) =>
+    api<{ total: number; items: NotificationRow[] }>(
+      `/api/v1/notifications${status ? `?status=${encodeURIComponent(status)}` : ""}`
+    ),
+  moderate: (body: { tg_id: number; action: string; reason?: string }) =>
+    api<{ user_id: number; warns: number }>("/api/v1/moderation/action", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  appeals: (status = "pending") =>
+    api<AppealRow[]>(`/api/v1/moderation/appeals?status=${encodeURIComponent(status)}`),
+  decideAppeal: (id: number, decision: "approve" | "reject", note = "") =>
+    api<{ id: number; status: string }>(`/api/v1/moderation/appeals/${id}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision, note }),
+    }),
+  backupVerify: (id: number) =>
+    api<{ id: number; status: string; expected: string | null; actual: string | null }>(
+      "/api/v1/backup/verify",
+      { method: "POST", body: JSON.stringify({ id }) }
+    ),
+  backupFileUrl: (id: number) => `/api/v1/backup/${id}/file`,
+  exportUrl: (entity: "users" | "topics" | "messages", fmt: "csv" | "json" = "csv") =>
+    `/api/v1/export/${entity}?fmt=${fmt}`,
+  subscriptions: (isMember?: boolean) =>
+    api<{ total: number; items: SubscriptionRow[] }>(
+      `/api/v1/subscriptions${isMember === undefined ? "" : `?is_member=${isMember}`}`
+    ),
   search: (query: string) =>
     api<Record<string, unknown[]>>("/api/v1/analytics/search", {
       method: "POST",

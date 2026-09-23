@@ -75,7 +75,10 @@ class BackupHistory(TimestampMixin, Base):
     __tablename__ = "backup_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    target: Mapped[str] = mapped_column(String(16), default="local")
+    # 32, not 16: a misconfigured target name must end up in the history row
+    # with a clear error, not as an insert failure (VARCHAR length is enforced
+    # by PostgreSQL, ignored by SQLite — the test suite alone hid this).
+    target: Mapped[str] = mapped_column(String(32), default="local")
     path: Mapped[str | None] = mapped_column(String(512))
     size: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(16), default=BackupStatus.RUNNING.value)
@@ -83,6 +86,22 @@ class BackupHistory(TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checksum: Mapped[str | None] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class BanAppeal(TimestampMixin, Base):
+    """D5: a banned/muted user asks the staff to reconsider."""
+
+    __tablename__ = "ban_appeals"
+    __table_args__ = (Index("ix_appeal_status", "status", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    tg_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|approved|rejected
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(Text)
 
 
 class Session(TimestampMixin, Base):

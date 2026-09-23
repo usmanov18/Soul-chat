@@ -9,24 +9,37 @@ import string
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 _CODE_ALPHABET = string.digits
+
+# bcrypt only ever reads the first 72 bytes of the secret. passlib used to
+# truncate silently; the `bcrypt` package raises instead, so the input is
+# folded through SHA-256 first. That keeps any length safe (JWTs are hashed
+# with this helper too) and makes the limit explicit rather than surprising.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _secret(password: str) -> bytes:
+    raw = password.encode("utf-8")
+    if len(raw) <= _BCRYPT_MAX_BYTES:
+        return raw
+    digest = hashlib.sha256(raw).hexdigest().encode("ascii")  # 64 bytes, ASCII safe
+    return digest
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(_secret(password), bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        return pwd_context.verify(plain, hashed)
-    except ValueError:
+        return bcrypt.checkpw(_secret(plain), hashed.encode("ascii"))
+    except (ValueError, TypeError):
+        # malformed/foreign hash format: treat as a failed login, never a 500
         return False
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
@@ -10,7 +10,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.core.timeutil import aware, utcnow
+from app.core.timeutil import aware, sql_hour, utcnow
 from app.enums import ChannelPostType, MediaKind, MessageContentType, TopicStatus
 from app.models.log import StatDaily
 from app.models.message import ChannelPost, Media, Message
@@ -44,6 +44,13 @@ class DashboardStats:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+# ``app.core.timeutil.sql_hour`` is the dialect-aware hour extraction.
+# Doing this in SQL instead of Python is what keeps /metrics cheap: the
+# previous implementation loaded every messages.created_at into memory on
+# every Prometheus scrape.
+hour_expression = sql_hour  # backwards compatible alias
 
 
 class AnalyticsService:
@@ -198,9 +205,10 @@ class AnalyticsService:
         since: datetime | None = None,
         until: datetime | None = None,
         media_only: bool = False,
+        hashtag: str | None = None,
         limit: int = 50,
     ) -> dict[str, list[dict]]:
-        """TZ 23: search by code / username / id / name / date / media / text."""
+        """TZ 23: search by code / username / id / name / date / media / text / hashtag."""
         topics: Select = select(Topic).limit(limit)
         if code:
             topics = topics.where(func.upper(Topic.code) == code.upper())
@@ -228,11 +236,22 @@ class AnalyticsService:
             )
         if media_only:
             messages_stmt = messages_stmt.where(Message.has_media.is_(True))
+        if hashtag:
+            tag = hashtag.lstrip("#").strip()
+            messages_stmt = messages_stmt.where(Message.text.ilike(f"%#{tag}%"))
         if since:
             messages_stmt = messages_stmt.where(Message.created_at >= since)
         if until:
             messages_stmt = messages_stmt.where(Message.created_at <= until)
         message_rows = (await self.session.execute(messages_stmt)).scalars().all()
+        if hashtag:
+            # keep only whole tags: '#bash' must not match '#bashraf'
+            pattern = re.compile(rf"(^|\s)#{re.escape(hashtag.lstrip('#').strip())}(\s|$|[.,!?])")
+            message_rows = [
+                row
+                for row in message_rows
+                if row.text and pattern.search(row.text)
+            ]
 
         return {
             "topics": [
@@ -322,13 +341,17 @@ class AnalyticsService:
         ]
 
     async def _top_hours(self) -> list[dict]:
-        rows = (await self.session.execute(select(Message.created_at))).scalars().all()
-        counter: Counter[int] = Counter()
-        for stamp in rows:
-            if stamp is None:
-                continue
-            counter[aware(stamp).hour] += 1
-        return [{"hour": hour, "messages": count} for hour, count in counter.most_common(24)]
+        """Hour-of-day histogram, aggregated by the database."""
+        hour = hour_expression(Message.created_at).label("hour")
+        rows = (
+            await self.session.execute(
+                select(hour, func.count().label("total"))
+                .where(Message.created_at.is_not(None))
+                .group_by(hour)
+                .order_by(func.count().desc())
+            )
+        ).all()
+        return [{"hour": int(value), "messages": int(total)} for value, total in rows]
 
     async def _top_media(self, limit: int = 5) -> list[dict]:
         rows = (

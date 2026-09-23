@@ -44,6 +44,16 @@ async def set_commands(bot: Bot) -> None:
             BotCommand(command="archive", description="Arxivni yuklab olish"),
             BotCommand(command="event", description="Hodisa yaratish"),
             BotCommand(command="schedule", description="Yozish vaqtini belgilash"),
+            BotCommand(command="timer", description="Xabarni keyin o'chirish (12h)"),
+            BotCommand(command="summary", description="Suhbat xulosasi"),
+            BotCommand(command="timeline", description="Munosabat vaqt shkalasi"),
+            BotCommand(command="suggest", description="Javob takliflari"),
+            BotCommand(command="remember", description="Eslatma saqlash"),
+            BotCommand(command="memory", description="Eslatmalar ro'yxati"),
+            BotCommand(command="appeal", description="Ban uchun murojaat"),
+            BotCommand(command="undo", description="Oxirgi xabarni o'chirish"),
+            BotCommand(command="search", description="Qidirish"),
+            BotCommand(command="forget", description="Eslatmani o'chirish"),
             BotCommand(command="help", description="Qo'llanma"),
         ]
     )

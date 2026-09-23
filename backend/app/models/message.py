@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,11 +37,27 @@ class Message(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_message_topic_thread", "topic_id", "tg_message_id"),
         Index("ix_message_topic_created", "topic_id", "created_at"),
+        # Telegram retries updates on network hiccups; the source DM id is what
+        # makes a relay idempotent (one DM message -> one topic message).
+        # Partial: only relayed DM copies carry a source id. Without the WHERE
+        # clause two group messages (source NULL) would violate the constraint.
+        Index(
+            "ix_message_source",
+            "topic_id",
+            "sender_id",
+            "source_message_id",
+            unique=True,
+            postgresql_where=text("source_message_id IS NOT NULL"),
+            sqlite_where=text("source_message_id IS NOT NULL"),
+            mssql_where=text("source_message_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     topic_id: Mapped[int] = mapped_column(ForeignKey("topics.id", ondelete="CASCADE"), index=True)
     tg_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    # id of the *incoming* DM/inline message this row was relayed from
+    source_message_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     thread_id: Mapped[int | None] = mapped_column(BigInteger)
     # Internal users.id; kept as a plain column so an archive row never
     # depends on the account still existing.
@@ -58,6 +75,9 @@ class Message(TimestampMixin, Base):
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
     moderation_action: Mapped[str] = mapped_column(String(16), default="allow")
     relayed: Mapped[bool] = mapped_column(Boolean, default=False)
+    edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    # D1: /timer sets this; the beat sweep deletes the topic copy when it passes
+    self_destruct_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     topic: Mapped[Topic] = relationship(back_populates="messages")  # noqa: F821
     media: Mapped[list[Media]] = relationship(
@@ -114,6 +134,20 @@ class Event(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     topic: Mapped[Topic] = relationship(back_populates="events")  # noqa: F821
+
+
+class Memory(TimestampMixin, Base):
+    """A fact the couple saved on purpose via /remember (TZ 27)."""
+
+    __tablename__ = "memories"
+    __table_args__ = (Index("ix_memory_topic", "topic_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    topic_id: Mapped[int] = mapped_column(ForeignKey("topics.id", ondelete="CASCADE"), index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    text: Mapped[str] = mapped_column(Text)
+
+    topic: Mapped[Topic] = relationship()  # noqa: F821
 
 
 class ChannelPost(TimestampMixin, Base):

@@ -64,6 +64,14 @@ celery_app.conf.update(
         "subscription-sweep": {
             "task": "app.tasks.subscription_sweep",
             "schedule": crontab(minute="*/15"),
+        "self-destruct-sweep": {
+            "task": "app.tasks.self_destruct_sweep",
+            "schedule": 60.0,
+        },
+        "birthday-sweep": {
+            "task": "app.tasks.birthday_sweep",
+            "schedule": crontab(hour=9, minute=0),
+        },
         },
     },
 )
@@ -85,18 +93,36 @@ async def _sweep_delete_pending() -> dict[str, Any]:
 
     now = datetime.now(UTC)
     archived: list[str] = []
+    failed: dict[str, str] = {}
     async with session_scope() as session:
         gateway = await _gateway()
         topics_svc = TopicService(session, gateway)
-        archives = ArchiveService(session)
+        archives = ArchiveService(session, gateway)
         stmt = select(Topic).where(
             Topic.status == "delete_pending", Topic.delete_at.is_not(None), Topic.delete_at <= now
         )
-        for topic in (await session.execute(stmt)).scalars().all():
-            await archives.export(topic)          # TZ 20: archive before deleting
-            await topics_svc.hard_delete(topic)
+        topics = list((await session.execute(stmt)).scalars().all())
+        for topic in topics:
+            # TZ 20 says the archive comes *before* the delete, so a failing
+            # export must never reach hard_delete. But one bad topic must not
+            # strand the rest of the batch either: this task runs every 5
+            # minutes, so without per-topic handling the first failure would
+            # abort the sweep forever and every other user's data would sit in
+            # delete_pending past its 96 hours.
+            try:
+                await archives.export(topic)
+            except Exception as exc:
+                failed[topic.code] = f"archive: {exc}"
+                logger.exception("sweep: archive failed for %s", topic.code)
+                continue
+            try:
+                await topics_svc.hard_delete(topic)
+            except Exception as exc:
+                failed[topic.code] = f"delete: {exc}"
+                logger.exception("sweep: delete failed for %s", topic.code)
+                continue
             archived.append(topic.code)
-    return {"archived": archived, "count": len(archived)}
+    return {"archived": archived, "failed": failed, "count": len(archived)}
 
 
 async def _scheduler_tick() -> dict[str, Any]:
@@ -162,6 +188,54 @@ async def _daily_backup() -> dict[str, Any]:
         return {"status": result.status, "path": result.path, "size": result.size}
 
 
+async def _self_destruct_sweep() -> dict[str, Any]:
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.core.db import session_scope
+    from app.models.message import Message
+    from app.models.topic import Topic
+
+    now = datetime.now(UTC)
+    deleted = 0
+    async with session_scope() as session:
+        rows = (
+            await session.execute(
+                select(Message).where(
+                    Message.self_destruct_at.is_not(None),
+                    Message.self_destruct_at <= now,
+                    Message.deleted.is_(False),
+                )
+            )
+        ).scalars().all()
+        if not rows:
+            return {"deleted": 0}
+
+        gateway = await _gateway()
+        topics = {}
+        for row in rows:
+            topics[row.topic_id] = None
+        for row in rows:
+            topic = topics.get(row.topic_id)
+            if topic is None:
+                topics[row.topic_id] = topic = await session.get(Topic, row.topic_id)
+            chat_id = topic.chat_id if topic else None
+            if chat_id and row.tg_message_id:
+                await gateway.delete_message(chat_id, row.tg_message_id)
+            row.deleted = True
+            deleted += 1
+    return {"deleted": deleted}
+
+
+async def _birthday_sweep() -> dict[str, Any]:
+    from app.core.db import session_scope
+    from app.services.notification import NotificationService
+
+    async with session_scope() as session:
+        return await NotificationService(session, await _gateway()).birthday_sweep()
+
+
 async def _subscription_sweep() -> dict[str, Any]:
     from sqlalchemy import select
 
@@ -213,6 +287,16 @@ def daily_snapshot() -> dict[str, Any]:
 @celery_app.task(name="app.tasks.daily_backup")
 def daily_backup() -> dict[str, Any]:
     return _run(_daily_backup)
+
+
+@celery_app.task(name="app.tasks.self_destruct_sweep")
+def self_destruct_sweep() -> dict[str, Any]:
+    return _run(_self_destruct_sweep)
+
+
+@celery_app.task(name="app.tasks.birthday_sweep")
+def birthday_sweep() -> dict[str, Any]:
+    return _run(_birthday_sweep)
 
 
 @celery_app.task(name="app.tasks.subscription_sweep")

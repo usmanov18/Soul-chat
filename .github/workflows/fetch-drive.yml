@@ -1,0 +1,80 @@
+name: Fetch Drive sources
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fetch-drive.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-drive
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    name: Download rar from Google Drive and extract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download soul chat.rar from Google Drive
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 -o "soul_chat.rar" \
+            "https://drive.usercontent.google.com/download?id=1jaqoQUufTChuYEI_SGx9oNU6KgsvCTfN&export=download&confirm=t"
+          ls -la soul_chat.rar
+          file soul_chat.rar
+
+      - name: Install extraction tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq >/dev/null
+          sudo apt-get install -y -qq p7zip-full >/dev/null || true
+          sudo apt-get install -y -qq p7zip-rar >/dev/null || true
+          sudo apt-get install -y -qq unrar >/dev/null || true
+          which 7z unrar || true
+
+      - name: Extract archive
+        run: |
+          set -uo pipefail
+          mkdir -p soul-chat-src
+          ok=0
+          if command -v 7z >/dev/null; then
+            if 7z x -y -osoul-chat-src soul_chat.rar; then ok=1; fi
+          fi
+          if [ "$ok" -ne 1 ] && command -v unrar >/dev/null; then
+            if unrar x -y soul_chat.rar soul-chat-src/; then ok=1; fi
+          fi
+          if [ "$ok" -ne 1 ]; then
+            echo "Extraction failed" >&2
+            exit 1
+          fi
+          echo "--- extracted tree ---"
+          find soul-chat-src -maxdepth 3 | head -80
+
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: soul-chat-drive
+          path: |
+            soul_chat.rar
+            soul-chat-src/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Commit sources to branch
+        run: |
+          set -euo pipefail
+          git config user.name "arena-ai-coding-agent[bot]"
+          git config user.email "arena-ai-coding-agent[bot]@users.noreply.github.com"
+          git add soul_chat.rar soul-chat-src
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "Fetch soul chat.rar from Google Drive and extract (auto)"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi

@@ -60,3 +60,45 @@ class NotificationService:
                 row.error = str(exc)[:500]
             await self.session.flush()
         return row
+
+    async def birthdays_today(self, now: datetime | None = None) -> list[User]:
+        """Users whose birthday is today (UTC month/day)."""
+        from sqlalchemy import func, select
+
+        now = now or datetime.now(UTC)
+        stmt = select(User).where(
+            func.extract("month", User.birthday) == now.month,
+            func.extract("day", User.birthday) == now.day,
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def birthday_sweep(self, now: datetime | None = None) -> dict[str, int]:
+        """Congratulate today's birthdays once (TZ 24: Birthday)."""
+        from sqlalchemy import func, select
+
+        from app.enums import NotificationKind, NotificationStatus
+
+        now = now or datetime.now(UTC)
+        users = await self.birthdays_today(now)
+        sent = 0
+        for user in users:
+            already = await self.session.scalar(
+                select(func.count())
+                .select_from(Notification)
+                .where(
+                    Notification.user_id == user.id,
+                    Notification.kind == NotificationKind.BIRTHDAY.value,
+                    Notification.status != NotificationStatus.FAILED.value,
+                    func.date(Notification.created_at) == now.date(),
+                )
+            )
+            if already:
+                continue
+            await self.notify(
+                user,
+                NotificationKind.BIRTHDAY,
+                title="🎉 Tug'ilgan kuningiz bilan!",
+                body="Bugun sizning kuningiz. Yorqin kunlar tilaymiz!",
+            )
+            sent += 1
+        return {"birthdays": len(users), "congratulated": sent}

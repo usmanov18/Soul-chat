@@ -100,3 +100,96 @@ async def test_search_by_tg_id_and_date_range(session, owner, partner):
     assert len((await service.search(tg_id=owner.tg_id))["users"]) == 1
     future = datetime.now(UTC) + timedelta(days=1)
     assert (await service.search(query="salom", since=future))["messages"] == []
+
+
+# ---------------------------------------------------------------------------
+# dialect aware SQL (the PostgreSQL paths that SQLite tests cannot reach)
+# ---------------------------------------------------------------------------
+def test_sql_hour_compiles_per_dialect_not_per_setting():
+    """Regression: the hour used to be chosen from ``settings.is_sqlite``.
+
+    The expression is built before it is bound to an engine, so a branch on the
+    URL emitted ``strftime('%H', …)`` for PostgreSQL — a function PostgreSQL does
+    not have. The decision must come from the compiling dialect.
+    """
+    from sqlalchemy.dialects import mysql, postgresql, sqlite
+
+    from app.core.timeutil import sql_hour
+    from app.models.message import Message
+
+    pg = str(sql_hour(Message.created_at).compile(dialect=postgresql.dialect()))
+    lite = str(sql_hour(Message.created_at).compile(dialect=sqlite.dialect()))
+
+    assert "EXTRACT(HOUR FROM messages.created_at)" in pg
+    assert "strftime" not in pg
+    assert "strftime('%H', messages.created_at)" in lite
+    assert "EXTRACT" not in lite
+    # both sides must be integer so GROUP BY / ORDER BY behave the same
+    assert pg.startswith("CAST(") and lite.startswith("CAST(")
+    # the generic fallback also produces valid SQL rather than failing
+    assert "EXTRACT" in str(sql_hour(Message.created_at).compile(dialect=mysql.dialect()))
+
+
+def test_sql_hour_is_independent_of_the_configured_database(monkeypatch):
+    """Patching DATABASE_URL must not change the generated SQL."""
+    from sqlalchemy.dialects import postgresql
+
+    from app.core.config import settings
+    from app.core.timeutil import sql_hour
+    from app.models.message import Message
+
+    monkeypatch.setattr(settings, "database_url", "sqlite+aiosqlite:///./x.db")
+    while_sqlite = str(sql_hour(Message.created_at).compile(dialect=postgresql.dialect()))
+
+    monkeypatch.setattr(settings, "database_url", "postgresql+asyncpg://u:p@h/db")
+    while_postgres = str(sql_hour(Message.created_at).compile(dialect=postgresql.dialect()))
+
+    assert while_sqlite == while_postgres
+    assert "EXTRACT" in while_postgres
+
+
+def test_hour_histogram_query_compiles_for_postgresql():
+    """The whole aggregate, not just the fragment."""
+    from sqlalchemy import func, select
+    from sqlalchemy.dialects import postgresql
+
+    from app.core.timeutil import sql_hour
+    from app.models.message import Message
+
+    hour = sql_hour(Message.created_at).label("hour")
+    stmt = (
+        select(hour, func.count().label("total"))
+        .where(Message.created_at.is_not(None))
+        .group_by(hour)
+        .order_by(func.count().desc())
+    )
+    compiled = str(stmt.compile(dialect=postgresql.dialect()))
+
+    assert "GROUP BY" in compiled
+    assert "strftime" not in compiled
+
+
+def test_partial_unique_index_compiles_with_where_for_postgresql():
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateIndex
+
+    from app.models.message import Message
+
+    index = next(i for i in Message.__table__.indexes if i.name == "ix_message_source")
+    ddl = str(CreateIndex(index).compile(dialect=postgresql.dialect()))
+
+    assert "UNIQUE" in ddl
+    assert "WHERE source_message_id IS NOT NULL" in ddl
+
+
+def test_row_lock_compiles_for_postgresql():
+    """``invite_service.accept`` guards the single partner slot with this."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    from app.models.topic import Topic
+
+    compiled = str(
+        select(Topic).where(Topic.id == 1).with_for_update().compile(dialect=postgresql.dialect())
+    )
+    assert compiled.rstrip().endswith("FOR UPDATE")
